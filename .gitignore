@@ -55,3 +55,21 @@ yarn-error.log
 
 # Expo
 .expo/*
+
+# Testing
+coverage/
+
+# Build artifacts
+dist/
+lib/
+*.tgz
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+.cache/

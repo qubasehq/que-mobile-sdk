@@ -1,73 +1,61 @@
-import { useEvent } from 'expo';
-import QueMobileSdk, { QueMobileSdkView } from 'que-mobile-sdk';
-import { Button, SafeAreaView, ScrollView, Text, View } from 'react-native';
+import React from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import HomeScreen from './screens/HomeScreen';
+import SimpleTaskScreen from './screens/SimpleTaskScreen';
+import VoiceCommandScreen from './screens/VoiceCommandScreen';
+import FileOperationsScreen from './screens/FileOperationsScreen';
+import DebugModeScreen from './screens/DebugModeScreen';
+import MultiStepScreen from './screens/MultiStepScreen';
+
+const Stack = createNativeStackNavigator();
 
 export default function App() {
-  const onChangePayload = useEvent(QueMobileSdk, 'onChange');
-
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.container}>
-        <Text style={styles.header}>Module API Example</Text>
-        <Group name="Constants">
-          <Text>{QueMobileSdk.PI}</Text>
-        </Group>
-        <Group name="Functions">
-          <Text>{QueMobileSdk.hello()}</Text>
-        </Group>
-        <Group name="Async functions">
-          <Button
-            title="Set value"
-            onPress={async () => {
-              await QueMobileSdk.setValueAsync('Hello from JS!');
-            }}
-          />
-        </Group>
-        <Group name="Events">
-          <Text>{onChangePayload?.value}</Text>
-        </Group>
-        <Group name="Views">
-          <QueMobileSdkView
-            url="https://www.example.com"
-            onLoad={({ nativeEvent: { url } }) => console.log(`Loaded: ${url}`)}
-            style={styles.view}
-          />
-        </Group>
-      </ScrollView>
-    </SafeAreaView>
+    <NavigationContainer>
+      <Stack.Navigator
+        initialRouteName="Home"
+        screenOptions={{
+          headerStyle: {
+            backgroundColor: '#007AFF',
+          },
+          headerTintColor: '#fff',
+          headerTitleStyle: {
+            fontWeight: 'bold',
+          },
+        }}
+      >
+        <Stack.Screen
+          name="Home"
+          component={HomeScreen}
+          options={{ title: 'QUE Mobile SDK Examples' }}
+        />
+        <Stack.Screen
+          name="SimpleTask"
+          component={SimpleTaskScreen}
+          options={{ title: 'Simple Task' }}
+        />
+        <Stack.Screen
+          name="VoiceCommand"
+          component={VoiceCommandScreen}
+          options={{ title: 'Voice Commands' }}
+        />
+        <Stack.Screen
+          name="FileOperations"
+          component={FileOperationsScreen}
+          options={{ title: 'File Operations' }}
+        />
+        <Stack.Screen
+          name="DebugMode"
+          component={DebugModeScreen}
+          options={{ title: 'Debug Mode' }}
+        />
+        <Stack.Screen
+          name="MultiStep"
+          component={MultiStepScreen}
+          options={{ title: 'Multi-Step Tasks' }}
+        />
+      </Stack.Navigator>
+    </NavigationContainer>
   );
 }
-
-function Group(props: { name: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.group}>
-      <Text style={styles.groupHeader}>{props.name}</Text>
-      {props.children}
-    </View>
-  );
-}
-
-const styles = {
-  header: {
-    fontSize: 30,
-    margin: 20,
-  },
-  groupHeader: {
-    fontSize: 20,
-    marginBottom: 20,
-  },
-  group: {
-    margin: 20,
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 20,
-  },
-  container: {
-    flex: 1,
-    backgroundColor: '#eee',
-  },
-  view: {
-    flex: 1,
-    height: 200,
-  },
-};
