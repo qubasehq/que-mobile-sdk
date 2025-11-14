@@ -73,3 +73,6 @@ lib/
 *.tmp
 *.temp
 .cache/
+
+# npm authentication (contains tokens)
+.npmrc
