@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "que-mobile-sdk": ["../src/index"],
+      "que-mobile-sdk/*": ["../src/*"]
+    }
+  }
+}
