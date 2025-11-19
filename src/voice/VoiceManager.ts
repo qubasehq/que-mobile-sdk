@@ -1,12 +1,12 @@
 /**
  * VoiceManager - Handles text-to-speech and speech-to-text operations
  * 
- * Wraps react-native-tts and react-native-voice to provide a unified
+ * Wraps react-native-tts and @react-native-voice/voice to provide a unified
  * interface for voice interactions with queuing and error handling.
  */
 
 import Tts from 'react-native-tts'
-import Voice, { SpeechResultsEvent, SpeechErrorEvent } from 'react-native-voice'
+import Voice, { SpeechResultsEvent, SpeechErrorEvent } from '@react-native-voice/voice'
 import { VoiceError } from '../utils/errors'
 
 // ============================================================================
@@ -137,7 +137,7 @@ export class VoiceManager {
 
       // Check if speech recognition is available
       const available = await Voice.isAvailable()
-      this.sttAvailable = available === 1 || available === true
+      this.sttAvailable = Boolean(available)
 
     } catch (error) {
       console.warn('STT initialization failed:', error)

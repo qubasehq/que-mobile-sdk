@@ -1,7 +1,6 @@
 {
   "name": "@qubasehq/que-mobile-sdk",
-  "version": "0.1.0",
-
+  "version": "0.1.2",
   "description": "AI-powered Android automation framework for React Native/Expo with SENSE → THINK → ACT loop. Control mobile apps with natural language using Gemini AI and Accessibility Services.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
@@ -61,10 +60,10 @@
   "homepage": "https://github.com/qubasehq/que-mobile-sdk#readme",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@react-native-voice/voice": "^3.2.4",
     "fast-xml-parser": "^5.3.2",
     "react-native-fs": "^2.20.0",
-    "react-native-tts": "^4.1.1",
-    "react-native-voice": "^0.3.0"
+    "react-native-tts": "^4.1.1"
   },
   "devDependencies": {
     "@expo/config-plugins": "^9.0.0",
