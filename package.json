@@ -1,6 +1,6 @@
 {
   "name": "@qubasehq/que-mobile-sdk",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "AI-powered Android automation framework for React Native/Expo with SENSE → THINK → ACT loop. Control mobile apps with natural language using Gemini AI and Accessibility Services.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
