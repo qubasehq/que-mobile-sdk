@@ -1,0 +1,11 @@
+{
+    "platforms": [
+        "android"
+    ],
+    "android": {
+        "package": "com.que.expo",
+        "modules": [
+            "QueExpoModule"
+        ]
+    }
+}
