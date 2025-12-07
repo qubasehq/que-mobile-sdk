@@ -15,12 +15,15 @@ object UserMessageBuilder {
     )
 
     fun build(args: Args): String {
-        return buildString {
+        // Limit history size to last 10 steps to prevent Context Window overflow and performance issues
+        val recentHistory = args.history.takeLast(10)
+
+        return buildString(capacity = 50000) {
             appendLine("<agent_history>")
-            if (args.history.isEmpty()) {
+            if (recentHistory.isEmpty()) {
                 appendLine("No history yet.")
             } else {
-                args.history.forEach { appendLine(it) }
+                recentHistory.forEach { appendLine(it) }
             }
             appendLine("</agent_history>")
             appendLine()

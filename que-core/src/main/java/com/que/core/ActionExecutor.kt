@@ -1,6 +1,11 @@
 package com.que.core
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
 
 /**
  * Represents all possible actions the agent can perform.
@@ -69,7 +74,9 @@ data class ActionResult(
     val success: Boolean,
     val message: String = "",
     val isDone: Boolean = false,  // Indicates task completion
-    val data: Map<String, String> = emptyMap()  // Additional result data
+    val data: Map<String, String> = emptyMap(),  // Additional result data
+    val retryable: Boolean = false,
+    val fatal: Boolean = false
 )
 
 /**
@@ -77,4 +84,72 @@ data class ActionResult(
  */
 interface ActionExecutor {
     suspend fun execute(action: Action): ActionResult
+}
+
+/**
+ * Shared parser for Actions from JSON
+ */
+object ActionParser {
+    fun parse(actionObj: JsonObject): Action? {
+        try {
+            val type = actionObj["type"]?.jsonPrimitive?.content ?: return null
+            
+            return when (type) {
+                "tap" -> {
+                    val id = actionObj["elementId"]?.jsonPrimitive?.intOrNull ?: return null
+                    Action.Tap(id)
+                }
+                "type" -> {
+                    val text = actionObj["text"]?.jsonPrimitive?.contentOrNull ?: return null
+                    Action.Type(text)
+                }
+                "scroll" -> {
+                    val dir = actionObj["direction"]?.jsonPrimitive?.contentOrNull ?: "down"
+                    val direction = if (dir == "up") Direction.UP else Direction.DOWN
+                    Action.Scroll(direction)
+                }
+                "long_press" -> {
+                    val id = actionObj["elementId"]?.jsonPrimitive?.intOrNull ?: return null
+                    Action.LongPress(id)
+                }
+                "back" -> Action.Back
+                "home" -> Action.Home
+                "switch_app" -> Action.SwitchApp
+                "open_app" -> {
+                    val appName = actionObj["appName"]?.jsonPrimitive?.contentOrNull ?: return null
+                    Action.OpenApp(appName)
+                }
+                "search_google" -> {
+                    val query = actionObj["query"]?.jsonPrimitive?.contentOrNull ?: return null
+                    Action.SearchGoogle(query)
+                }
+                "launch_intent" -> {
+                    val intentName = actionObj["intentName"]?.jsonPrimitive?.contentOrNull ?: return null
+                    val params = actionObj["parameters"]?.jsonObject?.entries?.associate {
+                        it.key to (it.value.jsonPrimitive.contentOrNull ?: "")
+                    } ?: emptyMap()
+                    Action.LaunchIntent(intentName, params)
+                }
+                "speak" -> {
+                    val text = actionObj["text"]?.jsonPrimitive?.contentOrNull ?: return null
+                    Action.Speak(text)
+                }
+                "write_file" -> {
+                    val fileName = actionObj["fileName"]?.jsonPrimitive?.contentOrNull ?: return null
+                    val content = actionObj["content"]?.jsonPrimitive?.contentOrNull ?: return null
+                    Action.WriteFile(fileName, content)
+                }
+                "read_file" -> {
+                    val fileName = actionObj["fileName"]?.jsonPrimitive?.contentOrNull ?: return null
+                    Action.ReadFile(fileName)
+                }
+                "finish" -> {
+                    Action.Custom("finish", emptyMap())
+                }
+                else -> Action.Custom(type, emptyMap())
+            }
+        } catch (e: Exception) {
+            return null
+        }
+    }
 }

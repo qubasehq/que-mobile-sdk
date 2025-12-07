@@ -22,6 +22,8 @@ class AndroidFileSystem(
 
     companion object {
         private const val TAG = "AndroidFileSystem"
+        private const val MAX_FILE_SIZE = 5 * 1024 * 1024L // 5MB
+        private const val MAX_FILES_COUNT = 100
     }
 
     init {
@@ -55,6 +57,14 @@ class AndroidFileSystem(
 
     override suspend fun writeFile(fileName: String, content: String): Boolean = withContext(Dispatchers.IO) {
         if (!isValidFilename(fileName)) return@withContext false
+        if (content.length > MAX_FILE_SIZE) return@withContext false
+        
+        // Check total files limit if creating new
+        if (!File(workspaceDir, fileName).exists()) {
+             val fileCount = workspaceDir.listFiles()?.size ?: 0
+             if (fileCount >= MAX_FILES_COUNT) return@withContext false
+        }
+
         try {
             File(workspaceDir, fileName).writeText(content)
             true

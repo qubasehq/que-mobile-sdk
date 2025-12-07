@@ -35,29 +35,68 @@ class GeminiClient(
         isLenient = true
     }
 
+    private val circuitBreaker = com.que.core.CircuitBreaker()
+
     override suspend fun generate(messages: List<Message>): LLMResponse {
         return withContext(Dispatchers.IO) {
-            try {
-                val payload = buildRequest(messages)
-                val requestBody = json.encodeToString(payload).toRequestBody("application/json".toMediaType())
-                
-                val request = Request.Builder()
-                    .url("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey")
-                    .post(requestBody)
-                    .build()
-
-                val response = client.newCall(request).execute()
-                val bodyString = response.body?.string() ?: ""
-
-                if (!response.isSuccessful) {
-                    throw RuntimeException("Gemini API Error (${response.code}): $bodyString")
+            circuitBreaker.execute {
+                retryWithBackoff {
+                    performRequest(messages)
                 }
-
-                parseResponse(bodyString)
-            } catch (e: Exception) {
-                throw RuntimeException("LLM Generation Failed: ${e.message}", e)
             }
         }
+    }
+
+    private suspend fun performRequest(messages: List<Message>): LLMResponse {
+        try {
+            val payload = buildRequest(messages)
+            val requestBody = json.encodeToString(payload).toRequestBody("application/json".toMediaType())
+            
+            val request = Request.Builder()
+                .url("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey")
+                .post(requestBody)
+                .build()
+
+            val response = client.newCall(request).execute()
+            val bodyString = response.body?.string() ?: ""
+
+            if (!response.isSuccessful) {
+                throw RuntimeException("Gemini API Error (${response.code}): $bodyString")
+            }
+
+            return parseResponse(bodyString)
+        } catch (e: Exception) {
+            // Unwrap if it's already a RuntimeException we threw
+            if (e is RuntimeException && e.message?.startsWith("Gemini API Error") == true) throw e
+            throw RuntimeException("LLM Generation Failed: ${e.message}", e)
+        }
+    }
+
+    private suspend fun <T> retryWithBackoff(
+        maxRetries: Int = 3,
+        initialDelay: Long = 2000,
+        factor: Double = 2.0,
+        block: suspend () -> T
+    ): T {
+        var currentDelay = initialDelay
+        repeat(maxRetries - 1) { _ ->
+            try {
+                return block()
+            } catch (e: Exception) {
+                val msg = e.message ?: ""
+                val isRateLimit = msg.contains("429") || msg.contains("Too Many Requests")
+                val isServerErr = msg.contains("500") || msg.contains("503")
+                
+                if (isRateLimit || isServerErr) {
+                    // Log warning here if logger available
+                    kotlinx.coroutines.delay(currentDelay)
+                    currentDelay = (currentDelay * factor).toLong()
+                } else {
+                    throw e
+                }
+            }
+        }
+        return block() // Last attempt
     }
 
     private fun buildRequest(messages: List<Message>): GenerateContentRequest {

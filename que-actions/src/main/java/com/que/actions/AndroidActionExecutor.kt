@@ -55,8 +55,9 @@ class AndroidActionExecutor(
                     }
                 }
             }
+
         } catch (e: Exception) {
-            ActionResult(false, "Error executing action: ${e.message}")
+            ActionResult(false, "Error executing action: ${e.message}", retryable = false)
         }
     }
 
@@ -85,7 +86,16 @@ class AndroidActionExecutor(
     }
 
     private suspend fun type(text: String, pressEnter: Boolean): ActionResult {
-        val success = controller.setText(text)
+        // Sanitize input
+        val sanitized = text
+            .replace(Regex("[\\x00-\\x1F]"), "") // Remove control chars
+            .take(10000) // Limit length
+        
+        if (sanitized.isBlank()) {
+            return ActionResult(false, "Invalid input text (sanitized is empty)")
+        }
+
+        val success = controller.setText(sanitized)
         
         if (success && pressEnter) {
             delay(500) // Wait for text to be set

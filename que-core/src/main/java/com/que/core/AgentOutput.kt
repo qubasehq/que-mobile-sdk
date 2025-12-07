@@ -7,5 +7,6 @@ package com.que.core
 data class AgentOutput(
     val thought: String,
     val nextGoal: String,
-    val actions: List<Action>
+    val actions: List<Action>,
+    val confidence: Float = 1.0f
 )

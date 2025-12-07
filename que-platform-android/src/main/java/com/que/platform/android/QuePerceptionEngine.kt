@@ -38,7 +38,6 @@ class QuePerceptionEngine(
         val keyboardDeferred = async { isKeyboardOpen() }
         val activityDeferred = async { service.currentActivityName }
         val screenshotDeferred = async { service.captureScreenshot() }
-        val dimensionsDeferred = async { getScreenDimensions(context) }
 
         // Await all concurrently
         val root = rootNodeDeferred.await()
@@ -46,20 +45,23 @@ class QuePerceptionEngine(
         val isKeyboard = keyboardDeferred.await()
         val activity = activityDeferred.await()
         val bitmap = screenshotDeferred.await()
-        val (width, height) = dimensionsDeferred.await()
 
         // Get scroll information
         val (scrollAbove, scrollBelow) = getScrollInfo(root)
 
         // Capture screenshot bytes
         val screenshotBytes = bitmap?.let { bmp ->
-            val stream = java.io.ByteArrayOutputStream()
-            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 50, stream)
-            stream.toByteArray()
+            try {
+                val stream = java.io.ByteArrayOutputStream()
+                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 50, stream)
+                stream.toByteArray()
+            } finally {
+                bmp.recycle()
+            }
         }
 
         // Parse UI hierarchy
-        var snapshot = parser.parse(root, width, height)
+        var snapshot = parser.parse(root)
         
         // Detect new elements
         val currentIds = snapshot.interactiveElements.map { it.id }.toSet()
@@ -81,7 +83,10 @@ class QuePerceptionEngine(
             screenshot = screenshotBytes,
             scrollablePixelsAbove = scrollAbove,
             scrollablePixelsBelow = scrollBelow,
-            isKeyboardOpen = isKeyboard
+            isKeyboardOpen = isKeyboard,
+            visualAnalysis = null, // TODO: Implement Visual Analysis
+            ocrText = null, // TODO: Implement OCR
+            detectedObjects = emptyList() // TODO: Implement Object Detection
         )
         
         // Update the registry so Actions can find these elements
@@ -184,20 +189,6 @@ class QuePerceptionEngine(
             } else {
                 appendLine("[End of page]")
             }
-        }
-    }
-
-    private fun getScreenDimensions(context: Context): Pair<Int, Int> {
-        val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val metrics = wm.currentWindowMetrics
-            Pair(metrics.bounds.width(), metrics.bounds.height())
-        } else {
-            @Suppress("DEPRECATION")
-            val display = wm.defaultDisplay
-            val size = Point()
-            display.getSize(size)
-            Pair(size.x, size.y)
         }
     }
 }

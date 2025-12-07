@@ -1,28 +1,32 @@
 package com.que.core
 
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
+
 /**
  * A shared registry to map Element IDs (used by LLM) to actual UI Elements (used by Executor).
  * This bridges the gap between Perception and Action.
  */
 object ElementRegistry {
-    private val elements = mutableMapOf<Int, InteractiveElement>()
+    private val lock = ReentrantReadWriteLock()
+    private var elements = mapOf<Int, InteractiveElement>()
 
     fun update(newElements: List<InteractiveElement>) {
-        synchronized(this) {
-            elements.clear()
-            newElements.forEach { elements[it.id] = it }
+        lock.write {
+            elements = newElements.associateBy { it.id }
         }
     }
 
     fun get(id: Int): InteractiveElement? {
-        synchronized(this) {
-            return elements[id]
+        return lock.read {
+            elements[id]
         }
     }
 
     fun clear() {
-        synchronized(this) {
-            elements.clear()
+        lock.write {
+            elements = emptyMap()
         }
     }
 }

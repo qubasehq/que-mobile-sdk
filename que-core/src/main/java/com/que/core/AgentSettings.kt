@@ -45,6 +45,11 @@ data class AgentSettings(
      * Whether to retry failed actions automatically.
      */
     val retryFailedActions: Boolean = true,
+
+    /**
+     * Whether to enable predictive planning.
+     */
+    val enablePredictivePlanning: Boolean = false,
     
     /**
      * Whether to enable speech feedback (TTS).

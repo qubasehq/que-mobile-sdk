@@ -23,7 +23,27 @@ data class ScreenSnapshot(
     val scrollablePixelsBelow: Int = 0,
     
     // Keyboard detection (like Blurr)
-    val isKeyboardOpen: Boolean = false
+    val isKeyboardOpen: Boolean = false,
+
+    // NEW: Visual analysis
+    val visualAnalysis: VisualAnalysis? = null,
+    val ocrText: String? = null,
+    val detectedObjects: List<DetectedObject> = emptyList()
+)
+
+data class VisualAnalysis(
+    val dominantColors: List<Int>, // Color ints
+    val layoutType: String, // "Grid", "List", "Form", etc.
+    val visualComplexity: Float, // 0.0 to 1.0
+    val hasImages: Boolean,
+    val imageDescriptions: List<String>
+)
+
+data class DetectedObject(
+    val label: String, // "Button", "Icon", "Image", etc.
+    val confidence: Float,
+    val bounds: Rect,
+    val elementId: Int?
 )
 
 data class InteractiveElement(

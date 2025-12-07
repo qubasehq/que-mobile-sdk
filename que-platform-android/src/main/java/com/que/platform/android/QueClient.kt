@@ -70,7 +70,7 @@ class QueClient internal constructor(
             
             val llm = GeminiClient(key, model)
             
-            val agent = QueAgent(perception, executor, llm, fileSystem)
+            val agent = QueAgent(context, perception, executor, llm, fileSystem)
             
             return QueClient(agent, context)
         }
@@ -83,39 +83,104 @@ class QueClient internal constructor(
  */
 private class ServiceGestureControllerWrapper : com.que.actions.GestureController {
     
-    private val service: QueAccessibilityService
-        get() = QueAccessibilityService.instance 
-            ?: throw IllegalStateException("Que Accessibility Service is not enabled or connected.")
+    private var serviceRef: java.lang.ref.WeakReference<QueAccessibilityService>? = null
+    private val checkInterval = 500L
+    
+    private class ServiceDisconnectedException(message: String) : Exception(message)
+
+    private suspend fun getService(): QueAccessibilityService {
+        return serviceRef?.get()?.takeIf { it.isConnected }
+            ?: waitForService()
+    }
+    
+    private suspend fun waitForService(): QueAccessibilityService {
+        repeat(20) { // 10 second timeout
+            QueAccessibilityService.instance?.let {
+                serviceRef = java.lang.ref.WeakReference(it)
+                return it
+            }
+            kotlinx.coroutines.delay(checkInterval)
+        }
+        throw ServiceDisconnectedException("Accessibility service unavailable")
+    }
 
     override fun dispatchGesture(path: android.graphics.Path, duration: Long): Boolean {
-        return service.dispatchGesture(path, duration)
+        return kotlinx.coroutines.runBlocking {
+            try {
+                getService().dispatchGesture(path, duration)
+            } catch (e: Exception) {
+                false
+            }
+        }
     }
 
     override fun performGlobalAction(action: Int): Boolean {
-        return service.performGlobalAction(action)
+        return kotlinx.coroutines.runBlocking {
+            try {
+                getService().performGlobalAction(action)
+            } catch (e: Exception) {
+                false
+            }
+        }
     }
 
     override fun click(x: Int, y: Int): Boolean {
-        return service.click(x, y)
+        return kotlinx.coroutines.runBlocking {
+            try {
+                getService().click(x, y)
+            } catch (e: Exception) {
+                false
+            }
+        }
     }
 
     override fun scroll(x1: Int, y1: Int, x2: Int, y2: Int, duration: Long): Boolean {
-        return service.scroll(x1, y1, x2, y2, duration)
+        return kotlinx.coroutines.runBlocking {
+            try {
+                getService().scroll(x1, y1, x2, y2, duration)
+            } catch (e: Exception) {
+                false
+            }
+        }
     }
 
     override fun setText(text: String): Boolean {
-        return service.setText(text)
+        return kotlinx.coroutines.runBlocking {
+            try {
+                getService().setText(text)
+            } catch (e: Exception) {
+                false
+            }
+        }
     }
 
     override fun openApp(packageName: String): Boolean {
-        return service.openApp(packageName)
+        return kotlinx.coroutines.runBlocking {
+            try {
+                getService().openApp(packageName)
+            } catch (e: Exception) {
+                false
+            }
+        }
     }
 
     override fun launchAppByName(appName: String): Boolean {
-        return service.launchAppByName(appName)
+        return kotlinx.coroutines.runBlocking {
+            try {
+                getService().launchAppByName(appName)
+            } catch (e: Exception) {
+                false
+            }
+        }
     }
 
     override fun speak(text: String): Boolean {
-        return service.speak(text)
+        return kotlinx.coroutines.runBlocking {
+            try {
+                getService().speak(text)
+            } catch (e: Exception) {
+                false
+            }
+        }
     }
 }

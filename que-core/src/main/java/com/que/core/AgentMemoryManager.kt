@@ -35,12 +35,36 @@ class AgentMemoryManager {
     fun addStateMessage(
         modelOutput: AgentOutput?,
         results: List<ActionResult>,
+
         stepInfo: StepInfo,
-        screen: ScreenSnapshot
+        screen: ScreenSnapshot,
+        history: List<AgentStepHistory> = emptyList(),
+        relevantMemories: List<Memory> = emptyList()
     ) {
         val messageText = buildString {
             appendLine("=== $stepInfo ===")
             appendLine()
+
+            // Relevant Memories
+            if (relevantMemories.isNotEmpty()) {
+                appendLine("**Contextual Memory:**")
+                relevantMemories.forEach { memory ->
+                    appendLine("- ${memory.value}")
+                }
+                appendLine()
+            }
+
+            // Summarize recent history (Last 5 steps)
+            if (history.isNotEmpty()) {
+                appendLine("**Recent History (Last 5 Steps):**")
+                history.takeLast(5).forEach { step ->
+                    val actionSummary = step.modelOutput?.actions?.joinToString(", ") { it.javaClass.simpleName } ?: "None"
+                    val success = step.results.all { it.success }
+                    appendLine("Step ${step.step}: $actionSummary → ${if (success) "Success" else "Failed"}")
+                }
+                appendLine("Learn from these results.")
+                appendLine()
+            }
             
             // Previous step results (if any)
             if (modelOutput != null && results.isNotEmpty()) {
@@ -77,6 +101,7 @@ class AgentMemoryManager {
                 {
                   "thought": "your reasoning",
                   "nextGoal": "immediate goal",
+                  "confidence": 0.9,
                   "actions": [
                   "actions": [
                     {"type": "tap", "elementId": 1},

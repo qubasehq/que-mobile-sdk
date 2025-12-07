@@ -86,9 +86,9 @@ class PromptBuilder {
                 task = task,
                 screen = screen,
                 fileSystem = object : FileSystem { // Dummy FS for legacy calls
-                    override suspend fun readFile(n: String) = ""
-                    override suspend fun writeFile(n: String, c: String) = false
-                    override suspend fun appendFile(n: String, c: String) = false
+                    override suspend fun readFile(fileName: String) = ""
+                    override suspend fun writeFile(fileName: String, content: String) = false
+                    override suspend fun appendFile(fileName: String, content: String) = false
                     override fun describe() = "No FS context"
                     override fun getTodoContents() = ""
                 },

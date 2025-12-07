@@ -18,9 +18,13 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
         var instance: QueAccessibilityService? = null
             private set
     }
+    
+    var isConnected: Boolean = false
+        private set
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        isConnected = true
         instance = this
         debugOverlayController = DebugOverlayController(this)
         appLauncher = AppLauncher(this)
@@ -40,6 +44,7 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
         // But SpeechCoordinator uses applicationContext.
         // Let's just null out the reference.
         speechCoordinator = null
+        isConnected = false
         instance = null
     }
 
@@ -55,6 +60,7 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
     }
 
     override fun onInterrupt() {
+        isConnected = false
         instance = null
     }
 

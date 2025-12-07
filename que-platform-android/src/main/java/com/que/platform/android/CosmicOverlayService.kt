@@ -20,6 +20,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.collect
 
 /**
  * Floating overlay service that shows cosmic wave animation on top of all apps.
@@ -52,6 +54,7 @@ class CosmicOverlayService : Service() {
         }
     }
 
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -81,11 +84,13 @@ class CosmicOverlayService : Service() {
 
         createOverlay()
         
-        // Observe agent state directly here
+        // Observe agent state with debounce to prevent UI flicker
         scope.launch {
-            agentState.collect { state ->
-                updateOverlayForState(state)
-            }
+            agentState
+                .debounce(100)
+                .collect { state ->
+                    updateOverlayForState(state)
+                }
         }
     }
 

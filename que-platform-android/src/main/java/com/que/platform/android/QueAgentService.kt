@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import android.view.WindowManager
 import com.que.actions.AndroidActionExecutor
 import com.que.core.QueAgent
 import com.que.llm.GeminiClient
@@ -21,6 +22,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.util.Queue
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.lang.ref.WeakReference
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 
 /**
  * A Foreground Service responsible for hosting and running the AI Agent.
@@ -41,6 +45,7 @@ class QueAgentService : Service() {
     private lateinit var apiKey: String
     private lateinit var model: String
     private lateinit var speechCoordinator: SpeechCoordinator
+    private var guidance: AndroidUserGuidance? = null
 
     companion object {
         private const val NOTIFICATION_CHANNEL_ID = "QueAgentServiceChannel"
@@ -57,15 +62,21 @@ class QueAgentService : Service() {
         @Volatile
         var currentTask: String? = null
             private set
+            
+        // Securely hold API key in memory to avoid passing via Intent extras (which can be dumped)
+        private var sessionApiKey: String? = null
 
         /**
          * Start the service with a task
          */
         fun start(context: Context, task: String, apiKey: String, model: String = "gemini-2.5-flash") {
             Log.d("QueAgentService", "Starting service with task: $task")
+            // Store key in memory and clear it later. This prevents it from appearing in system dumps blocks.
+            sessionApiKey = apiKey
+            
             val intent = Intent(context, QueAgentService::class.java).apply {
                 putExtra(EXTRA_TASK, task)
-                putExtra(EXTRA_API_KEY, apiKey)
+                // putExtra(EXTRA_API_KEY, apiKey) // REMOVED for security
                 putExtra(EXTRA_MODEL, model)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -110,15 +121,23 @@ class QueAgentService : Service() {
         }
 
         // Extract configuration
-        intent?.getStringExtra(EXTRA_API_KEY)?.let { apiKey = it }
-        intent?.getStringExtra(EXTRA_MODEL)?.let { model = it }
+        val task = intent?.getStringExtra(EXTRA_TASK)
+        val apiKeyFromIntent = sessionApiKey // Retrieve from memory
+        val model = intent?.getStringExtra(EXTRA_MODEL) ?: "gemini-2.5-flash"
+
+        if (task == null || apiKeyFromIntent == null) {
+            Log.e(TAG, "Missing task or API Key (expired session?)")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        
+        this.apiKey = apiKeyFromIntent
+        this.model = model
 
         // Add new task to the queue
-        intent?.getStringExtra(EXTRA_TASK)?.let {
-            if (it.isNotBlank()) {
-                Log.d(TAG, "Adding task to queue: $it")
-                taskQueue.add(it)
-            }
+        if (task.isNotBlank()) {
+            Log.d(TAG, "Adding task to queue: $task")
+            taskQueue.add(task)
         }
 
         // If the agent is not already processing tasks, start the loop
@@ -224,7 +243,20 @@ class QueAgentService : Service() {
         
         val speechService = SpeechServiceWrapper(speechCoordinator)
         
-        agent = QueAgent(perception, executor, llm, fileSystem, settings, speech = speechService)
+        // Initialize UserGuidance
+        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        guidance = AndroidUserGuidance(this, windowManager)
+        
+        agent = QueAgent(
+            context = this, 
+            perception = perception, 
+            executor = executor, 
+            llm = llm, 
+            fileSystem = fileSystem, 
+            settings = settings, 
+            speech = speechService,
+            guidance = guidance
+        )
         Log.d(TAG, "✓ QueAgent instance created")
         
         // Forward agent state to overlay service
@@ -266,6 +298,10 @@ class QueAgentService : Service() {
         if (::speechCoordinator.isInitialized) {
             speechCoordinator.shutdown()
         }
+        
+        // Destroy guidance overlay
+        guidance?.destroy()
+        guidance = null
         
         // Reset status
         isRunning = false
@@ -331,41 +367,105 @@ class QueAgentService : Service() {
      * even if the Service isn't connected yet.
      */
     private class ServiceGestureControllerWrapper : com.que.actions.GestureController {
+        private var serviceRef: WeakReference<QueAccessibilityService>? = null
+        private val checkInterval = 500L
         
-        private val service: QueAccessibilityService
-            get() = QueAccessibilityService.instance
-                ?: throw IllegalStateException("Que Accessibility Service is not enabled or connected.")
+        private class ServiceDisconnectedException(message: String) : Exception(message)
+
+        private suspend fun getService(): QueAccessibilityService {
+            return serviceRef?.get()?.takeIf { it.isConnected }
+                ?: waitForService()
+        }
+        
+        private suspend fun waitForService(): QueAccessibilityService {
+            repeat(20) { // 10 second timeout
+                QueAccessibilityService.instance?.let {
+                    serviceRef = WeakReference(it)
+                    return it
+                }
+                delay(checkInterval)
+            }
+            throw ServiceDisconnectedException("Accessibility service unavailable")
+        }
 
         override fun dispatchGesture(path: android.graphics.Path, duration: Long): Boolean {
-            return service.dispatchGesture(path, duration)
+            return runBlocking {
+                try {
+                    getService().dispatchGesture(path, duration)
+                } catch (e: Exception) {
+                    false
+                }
+            }
         }
 
         override fun performGlobalAction(action: Int): Boolean {
-            return service.performGlobalAction(action)
+            return runBlocking {
+                try {
+                    getService().performGlobalAction(action)
+                } catch (e: Exception) {
+                    false
+                }
+            }
         }
 
         override fun click(x: Int, y: Int): Boolean {
-            return service.click(x, y)
+            return runBlocking {
+                try {
+                    getService().click(x, y)
+                } catch (e: Exception) {
+                    false
+                }
+            }
         }
 
         override fun scroll(x1: Int, y1: Int, x2: Int, y2: Int, duration: Long): Boolean {
-            return service.scroll(x1, y1, x2, y2, duration)
+            return runBlocking {
+                try {
+                    getService().scroll(x1, y1, x2, y2, duration)
+                } catch (e: Exception) {
+                    false
+                }
+            }
         }
 
         override fun setText(text: String): Boolean {
-            return service.setText(text)
+            return runBlocking {
+                try {
+                    getService().setText(text)
+                } catch (e: Exception) {
+                    false
+                }
+            }
         }
 
         override fun openApp(packageName: String): Boolean {
-            return service.openApp(packageName)
+            return runBlocking {
+                try {
+                    getService().openApp(packageName)
+                } catch (e: Exception) {
+                    false
+                }
+            }
         }
 
         override fun launchAppByName(appName: String): Boolean {
-            return service.launchAppByName(appName)
+            return runBlocking {
+                try {
+                    getService().launchAppByName(appName)
+                } catch (e: Exception) {
+                    false
+                }
+            }
         }
 
         override fun speak(text: String): Boolean {
-            return service.speak(text)
+            return runBlocking {
+                try {
+                    getService().speak(text)
+                } catch (e: Exception) {
+                    false
+                }
+            }
         }
     }
 }

@@ -10,7 +10,7 @@ import com.que.core.ScreenSnapshot
  */
 class SemanticParser {
 
-    fun parse(root: AccessibilityNodeInfo, displayWidth: Int, displayHeight: Int): ScreenSnapshot {
+    fun parse(root: AccessibilityNodeInfo): ScreenSnapshot {
         val interactiveElements = mutableListOf<InteractiveElement>()
         val sb = StringBuilder()
         
@@ -28,8 +28,12 @@ class SemanticParser {
         )
     }
 
+    private val MAX_NODES = 500
+
     private fun traverse(node: AccessibilityNodeInfo?, sb: StringBuilder, elements: MutableList<InteractiveElement>) {
         if (node == null) return
+        if (elements.size >= MAX_NODES) return // Safety limit
+
         if (!node.isVisibleToUser) return
 
         // 1. Check if the node is "interesting"
