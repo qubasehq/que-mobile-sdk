@@ -68,7 +68,7 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
 
     // --- GestureController Implementation ---
 
-    override fun dispatchGesture(path: Path, duration: Long): Boolean {
+    override suspend fun dispatchGesture(path: Path, duration: Long): Boolean {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, duration))
             .build()
@@ -77,12 +77,12 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
 
 
 
-    override fun click(x: Int, y: Int): Boolean {
+    override suspend fun click(x: Int, y: Int): Boolean {
         val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
         return dispatchGesture(path, 100)
     }
 
-    override fun scroll(x1: Int, y1: Int, x2: Int, y2: Int, duration: Long): Boolean {
+    override suspend fun scroll(x1: Int, y1: Int, x2: Int, y2: Int, duration: Long): Boolean {
         val path = Path().apply {
             moveTo(x1.toFloat(), y1.toFloat())
             lineTo(x2.toFloat(), y2.toFloat())
@@ -90,7 +90,7 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
         return dispatchGesture(path, duration)
     }
 
-    override fun setText(text: String): Boolean {
+    override suspend fun setText(text: String): Boolean {
         // Find the focused node and set text
         val root = rootInActiveWindow ?: return false
         val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return false
@@ -100,7 +100,7 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
         return focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
     }
 
-    override fun openApp(packageName: String): Boolean {
+    override suspend fun openApp(packageName: String): Boolean {
         return try {
             val intent = packageManager.getLaunchIntentForPackage(packageName)
             if (intent != null) {
@@ -115,11 +115,11 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
         }
     }
 
-    override fun launchAppByName(appName: String): Boolean {
+    override suspend fun launchAppByName(appName: String): Boolean {
         return appLauncher?.launch(appName) ?: false
     }
 
-    override fun speak(text: String): Boolean {
+    override suspend fun speak(text: String): Boolean {
         speechCoordinator?.speakToUser(text)
         return true
     }
@@ -157,5 +157,9 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
             }
         }
         return null
+    }
+    // Implement GestureController method
+    override suspend fun performGlobal(action: Int): Boolean {
+        return super.performGlobalAction(action)
     }
 }

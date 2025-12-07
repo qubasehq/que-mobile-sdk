@@ -54,8 +54,7 @@ class PredictivePlanner(
 ) {
     suspend fun planAhead(
         task: String,
-        screen: ScreenSnapshot,
-        history: List<AgentStepHistory>
+        screen: ScreenSnapshot
     ): ActionPlan {
         val prompt = buildString {
             appendLine("You are an expert mobile agent planning a sequence of actions.")

@@ -10,7 +10,7 @@ import com.que.core.ScreenSnapshot
  */
 class SemanticParser {
 
-    fun parse(root: AccessibilityNodeInfo): ScreenSnapshot {
+    fun parse(root: AccessibilityNodeInfo, width: Int, height: Int): ScreenSnapshot {
         val interactiveElements = mutableListOf<InteractiveElement>()
         val sb = StringBuilder()
         
@@ -24,7 +24,9 @@ class SemanticParser {
             hierarchyXml = "", // Reserved for future XML hierarchy export
             simplifiedDescription = sb.toString(),
             interactiveElements = interactiveElements,
-            activityName = "Unknown" // Will be overridden by QuePerceptionEngine
+            activityName = "Unknown", // Will be overridden by QuePerceptionEngine
+            displayWidth = width,
+            displayHeight = height
         )
     }
 

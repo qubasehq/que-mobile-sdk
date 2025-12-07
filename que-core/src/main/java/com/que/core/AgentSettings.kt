@@ -54,5 +54,10 @@ data class AgentSettings(
     /**
      * Whether to enable speech feedback (TTS).
      */
-    val enableSpeech: Boolean = true
+    val enableSpeech: Boolean = true,
+
+    /**
+     * Whether to enable adaptive learning from feedback.
+     */
+    val enableAdaptiveLearning: Boolean = true
 )

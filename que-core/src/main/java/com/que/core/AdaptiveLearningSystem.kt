@@ -75,9 +75,7 @@ class AdaptiveLearningSystem(
     }
     
     suspend fun generateImprovedPrompt(
-        task: String,
-        screen: ScreenSnapshot,
-        history: List<AgentStepHistory>
+        screen: ScreenSnapshot
     ): List<Message> {
         val messages = mutableListOf<Message>()
         

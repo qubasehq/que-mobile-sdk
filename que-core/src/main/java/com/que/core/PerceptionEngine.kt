@@ -17,6 +17,8 @@ data class ScreenSnapshot(
     val interactiveElements: List<InteractiveElement>,
     val activityName: String = "Unknown",
     val screenshot: ByteArray? = null,
+    val displayWidth: Int = 0,
+    val displayHeight: Int = 0,
     
     // Scroll awareness (like Blurr)
     val scrollablePixelsAbove: Int = 0,

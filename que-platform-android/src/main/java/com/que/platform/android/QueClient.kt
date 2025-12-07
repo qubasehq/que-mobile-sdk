@@ -104,83 +104,67 @@ private class ServiceGestureControllerWrapper : com.que.actions.GestureControlle
         throw ServiceDisconnectedException("Accessibility service unavailable")
     }
 
-    override fun dispatchGesture(path: android.graphics.Path, duration: Long): Boolean {
-        return kotlinx.coroutines.runBlocking {
-            try {
-                getService().dispatchGesture(path, duration)
-            } catch (e: Exception) {
-                false
-            }
+    override suspend fun dispatchGesture(path: android.graphics.Path, duration: Long): Boolean {
+        return try {
+            getService().dispatchGesture(path, duration)
+        } catch (e: Exception) {
+            false
         }
     }
 
-    override fun performGlobalAction(action: Int): Boolean {
-        return kotlinx.coroutines.runBlocking {
-            try {
-                getService().performGlobalAction(action)
-            } catch (e: Exception) {
-                false
-            }
+    override suspend fun performGlobal(action: Int): Boolean {
+        return try {
+            getService().performGlobal(action)
+        } catch (e: Exception) {
+            false
         }
     }
 
-    override fun click(x: Int, y: Int): Boolean {
-        return kotlinx.coroutines.runBlocking {
-            try {
-                getService().click(x, y)
-            } catch (e: Exception) {
-                false
-            }
+    override suspend fun click(x: Int, y: Int): Boolean {
+        return try {
+            getService().click(x, y)
+        } catch (e: Exception) {
+            false
         }
     }
 
-    override fun scroll(x1: Int, y1: Int, x2: Int, y2: Int, duration: Long): Boolean {
-        return kotlinx.coroutines.runBlocking {
-            try {
-                getService().scroll(x1, y1, x2, y2, duration)
-            } catch (e: Exception) {
-                false
-            }
+    override suspend fun scroll(x1: Int, y1: Int, x2: Int, y2: Int, duration: Long): Boolean {
+        return try {
+            getService().scroll(x1, y1, x2, y2, duration)
+        } catch (e: Exception) {
+            false
         }
     }
 
-    override fun setText(text: String): Boolean {
-        return kotlinx.coroutines.runBlocking {
-            try {
-                getService().setText(text)
-            } catch (e: Exception) {
-                false
-            }
+    override suspend fun setText(text: String): Boolean {
+        return try {
+            getService().setText(text)
+        } catch (e: Exception) {
+            false
         }
     }
 
-    override fun openApp(packageName: String): Boolean {
-        return kotlinx.coroutines.runBlocking {
-            try {
-                getService().openApp(packageName)
-            } catch (e: Exception) {
-                false
-            }
+    override suspend fun openApp(packageName: String): Boolean {
+        return try {
+            getService().openApp(packageName)
+        } catch (e: Exception) {
+            false
         }
     }
 
-    override fun launchAppByName(appName: String): Boolean {
-        return kotlinx.coroutines.runBlocking {
-            try {
-                getService().launchAppByName(appName)
-            } catch (e: Exception) {
-                false
-            }
+    override suspend fun launchAppByName(appName: String): Boolean {
+        return try {
+            getService().launchAppByName(appName)
+        } catch (e: Exception) {
+            false
         }
     }
 
-    override fun speak(text: String): Boolean {
-        return kotlinx.coroutines.runBlocking {
-            try {
-                getService().speak(text)
-            } catch (e: Exception) {
-                false
-            }
+    override suspend fun speak(text: String): Boolean {
+        return try {
+            getService().speak(text)
+        } catch (e: Exception) {
+            false
         }
     }
 }

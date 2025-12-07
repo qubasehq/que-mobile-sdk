@@ -61,7 +61,7 @@ class AndroidActionExecutor(
         }
     }
 
-    private fun tap(elementId: Int): ActionResult {
+    private suspend fun tap(elementId: Int): ActionResult {
         val element = com.que.core.ElementRegistry.get(elementId)
             ?: return ActionResult(false, "Element with ID $elementId not found on screen.")
             
@@ -72,7 +72,7 @@ class AndroidActionExecutor(
         return ActionResult(success, "Tapped element $elementId at ($centerX, $centerY)")
     }
 
-    private fun longPress(elementId: Int): ActionResult {
+    private suspend fun longPress(elementId: Int): ActionResult {
         val element = com.que.core.ElementRegistry.get(elementId)
             ?: return ActionResult(false, "Element with ID $elementId not found on screen.")
 
@@ -122,7 +122,7 @@ class AndroidActionExecutor(
         }
     }
 
-    private fun openApp(appName: String): ActionResult {
+    private suspend fun openApp(appName: String): ActionResult {
         val success = controller.launchAppByName(appName)
         return if (success) {
             ActionResult(true, "Opened app matching: $appName")
@@ -136,7 +136,7 @@ class AndroidActionExecutor(
         }
     }
 
-    private fun speak(text: String): ActionResult {
+    private suspend fun speak(text: String): ActionResult {
         val success = controller.speak(text)
         return ActionResult(success, "Spoke: $text")
     }
@@ -145,7 +145,7 @@ class AndroidActionExecutor(
      * Robust pixel-based scrolling matching Blurr's implementation.
      * Uses screen dimensions to calculate safe swipe coordinates.
      */
-    private fun scroll(direction: Direction, pixels: Int, duration: Long): ActionResult {
+    private suspend fun scroll(direction: Direction, pixels: Int, duration: Long): ActionResult {
         val x = screenWidth / 2
         
         return when (direction) {
@@ -200,12 +200,12 @@ class AndroidActionExecutor(
         }
     }
 
-    private fun performGlobal(action: Int, name: String): ActionResult {
-        val success = controller.performGlobalAction(action)
+    private suspend fun performGlobal(action: Int, name: String): ActionResult {
+        val success = controller.performGlobal(action)
         return ActionResult(success, "Performed $name")
     }
 
-    private fun launchIntent(name: String, params: Map<String, String>): ActionResult {
+    private suspend fun launchIntent(name: String, params: Map<String, String>): ActionResult {
         val success = intentRegistry.launch(name, params)
         return ActionResult(success, "Launched intent '$name'")
     }

@@ -80,6 +80,13 @@ class QueAgent(
     // NEW: Intelligent Recovery
     private val recoverySystem: IntelligentRecoverySystem = IntelligentRecoverySystem(contextualMemory)
     private var consecutiveFailures: Int = 0
+
+    // NEW: Adaptive Learning
+    private val learningSystem: AdaptiveLearningSystem? = if (settings.enableAdaptiveLearning) {
+        AdaptiveLearningSystem(contextualMemory, llm)
+    } else {
+        null
+    }
     
     private fun log(message: String, level: String = "D") {
         if (settings.enableLogging) {
@@ -194,8 +201,7 @@ class QueAgent(
             val agentOutput = if (settings.enablePredictivePlanning) {
                 if (currentPlan == null) {
                     log("🔮 Generating predictive plan...", "I")
-                    currentPlan = planner.planAhead(task, screen, history)
-                    currentPlanStepIndex = 0
+                    currentPlan = planner.planAhead(task, screen)
                     if (currentPlan!!.steps.isNotEmpty()) {
                         log("📋 Plan generated: ${currentPlan!!.steps.size} steps", "I")
                     } else {
@@ -216,10 +222,18 @@ class QueAgent(
                     )
                 } else {
                     currentPlan = null // Plan finished or invalid, fallback
-                    memory.getMessages().let { generateAgentOutput(it) }
+                    val messages = memory.getMessages().toMutableList()
+                    if (learningSystem != null) {
+                        messages.addAll(learningSystem.generateImprovedPrompt(screen))
+                    }
+                    generateAgentOutput(messages)
                 }
             } else {
-                memory.getMessages().let { generateAgentOutput(it) }
+                val messages = memory.getMessages().toMutableList()
+                if (learningSystem != null) {
+                    messages.addAll(learningSystem.generateImprovedPrompt(screen))
+                }
+                generateAgentOutput(messages)
             }
 
             // Handle LLM Failure with corrective feedback
@@ -450,6 +464,29 @@ class QueAgent(
         return null
     }
 
+    private fun extractJson(text: String): String? {
+        var depth = 0
+        var startIdx = -1
+        
+        for (i in text.indices) {
+            when (text[i]) {
+                '{' -> {
+                    if (depth == 0) startIdx = i
+                    depth++
+                }
+                '}' -> {
+                    depth--
+                    if (depth == 0 && startIdx != -1) {
+                        // Found the first valid top-level object, return it
+                        // (Assuming we only care about the first correct JSON block)
+                        return text.substring(startIdx, i + 1)
+                    }
+                }
+            }
+        }
+        return null
+    }
+
     /**
      * Parse LLM response into AgentOutput with multi-action support
      */
@@ -463,25 +500,24 @@ class QueAgent(
             
             log("Raw LLM Response (first 500 chars): ${cleaned.take(500)}", "D")
 
-            // Find JSON boundaries properly
-            val jsonMatch = Regex("\\{(?:[^{}]|\\{[^{}]*\\})*\\}").find(cleaned)
+            // Find JSON boundaries properly using a stack-based approach
+            val jsonContent = extractJson(cleaned)
             
-            if (jsonMatch == null) {
+            if (jsonContent == null) {
                 log("No valid JSON found in response", "E")
-                log("Full response: $jsonStr", "E")
                 return null
             }
             
-            val jsonContent = jsonMatch.value
-            log("Cleaned JSON: $jsonContent", "D")
             
-            val json = Json { 
+            log("Cleaned JSON: $jsonContent", "D")
+            // Parse with proper error handling
+            val kotlinxJson = Json { 
                 ignoreUnknownKeys = true
                 isLenient = true
                 coerceInputValues = true
             }
             
-            val jsonElement = json.parseToJsonElement(jsonContent).jsonObject
+            val jsonElement = kotlinxJson.parseToJsonElement(jsonContent).jsonObject
             
             // Validate required fields
             if (!jsonElement.containsKey("thought") && !jsonElement.containsKey("actions")) {

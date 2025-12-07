@@ -61,7 +61,8 @@ class QuePerceptionEngine(
         }
 
         // Parse UI hierarchy
-        var snapshot = parser.parse(root)
+        val (width, height) = getScreenDimensions()
+        var snapshot = parser.parse(root, width, height)
         
         // Detect new elements
         val currentIds = snapshot.interactiveElements.map { it.id }.toSet()
@@ -189,6 +190,25 @@ class QuePerceptionEngine(
             } else {
                 appendLine("[End of page]")
             }
+        }
+    }
+
+    private fun getScreenDimensions(): Pair<Int, Int> {
+        return try {
+            val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val metrics = windowManager.currentWindowMetrics
+                val bounds = metrics.bounds
+                Pair(bounds.width(), bounds.height())
+            } else {
+                @Suppress("DEPRECATION")
+                val metrics = android.util.DisplayMetrics()
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay.getRealMetrics(metrics)
+                Pair(metrics.widthPixels, metrics.heightPixels)
+            }
+        } catch (e: Exception) {
+            Pair(0, 0)
         }
     }
 }
