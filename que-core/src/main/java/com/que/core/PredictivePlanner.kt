@@ -54,11 +54,21 @@ class PredictivePlanner(
 ) {
     suspend fun planAhead(
         task: String,
-        screen: ScreenSnapshot
+        screen: ScreenSnapshot,
+        history: List<AgentStepHistory> = emptyList()
     ): ActionPlan {
+        val historyContext = if (history.isNotEmpty()) {
+            "Recent attempts:\n" + history.takeLast(3).joinToString("\n") { 
+                "Step ${it.step}: ${it.modelOutput?.nextGoal} - ${if (it.results.all { r -> r.success }) "Success" else "Failed"}"
+            }
+        } else ""
         val prompt = buildString {
             appendLine("You are an expert mobile agent planning a sequence of actions.")
             appendLine("Task: $task")
+            if (historyContext.isNotBlank()) {
+                appendLine()
+                appendLine(historyContext)
+            }
             appendLine("Current Activity: ${screen.activityName}")
             appendLine()
             appendLine("Screen Elements:")
@@ -102,6 +112,7 @@ class PredictivePlanner(
             return parseActionPlan(jsonContent)
         } catch (e: Exception) {
             // Fallback to empty plan
+            android.util.Log.e("PredictivePlanner", "Planning failed: ${e.message}", e)
             return ActionPlan("Fallback", emptyList(), 0.0f, 0)
         }
     }

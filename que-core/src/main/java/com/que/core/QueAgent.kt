@@ -17,6 +17,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import com.que.core.RecoveryStrategy
 
 /**
  * COMPLETELY REWRITTEN Agent Loop Logic
@@ -88,6 +89,10 @@ class QueAgent(
         null
     }
     
+    // NEW: Advanced Features from Phase 5
+    private val stuckDetector = StuckStateDetector()
+    private val smartRetry = SmartRetryStrategy()
+    
     private fun log(message: String, level: String = "D") {
         if (settings.enableLogging) {
             when (level) {
@@ -123,6 +128,7 @@ class QueAgent(
                 // Initialize memory with task
                 val systemPrompt = promptBuilder.buildSystemPrompt()
                 memory.addTask(instruction, systemPrompt)
+                stuckDetector.clear()
                 
                 loop(instruction)
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -176,6 +182,20 @@ class QueAgent(
             log("👀 Sensing screen state...", "I")
             _state.value = AgentState.Perceiving
             val screen = perception.capture()
+            
+            // Check for stuck state
+            stuckDetector.recordState(screen)
+            if (stuckDetector.isStuck()) {
+                log("⚠️ Agent appears stuck in the same state for too long!", "W")
+                val recovery = stuckDetector.suggestRecovery(screen)
+                if (recovery != null && recovery is RecoveryStrategy.AlternativeAction) {
+                    log("♻️ Attempting to unstick via Back action", "I")
+                    executor.execute(recovery.actions.first())
+                    kotlinx.coroutines.delay(1000)
+                    // Skip rest of loop to perceive again
+                    continue
+                }
+            }
 
             // NEW: Recall memories
             val memoryContext = MemoryContext(app = screen.activityName)
@@ -201,7 +221,7 @@ class QueAgent(
             val agentOutput = if (settings.enablePredictivePlanning) {
                 if (currentPlan == null) {
                     log("🔮 Generating predictive plan...", "I")
-                    currentPlan = planner.planAhead(task, screen)
+                    currentPlan = planner.planAhead(task, screen, history)
                     if (currentPlan!!.steps.isNotEmpty()) {
                         log("📋 Plan generated: ${currentPlan!!.steps.size} steps", "I")
                     } else {
@@ -224,14 +244,14 @@ class QueAgent(
                     currentPlan = null // Plan finished or invalid, fallback
                     val messages = memory.getMessages().toMutableList()
                     if (learningSystem != null) {
-                        messages.addAll(learningSystem.generateImprovedPrompt(screen))
+                        messages.addAll(learningSystem.generateImprovedPrompt(task, screen, history))
                     }
                     generateAgentOutput(messages)
                 }
             } else {
                 val messages = memory.getMessages().toMutableList()
                 if (learningSystem != null) {
-                    messages.addAll(learningSystem.generateImprovedPrompt(screen))
+                    messages.addAll(learningSystem.generateImprovedPrompt(task, screen, history))
                 }
                 generateAgentOutput(messages)
             }
@@ -398,11 +418,20 @@ class QueAgent(
                 
                 when (strategy) {
                     is RecoveryStrategy.Retry -> {
-                        for (attempt in 1..strategy.maxAttempts) {
-                            log("Retry attempt $attempt/${strategy.maxAttempts}", "I")
-                            kotlinx.coroutines.delay(strategy.delay)
-                            result = executor.execute(action)
-                            if (result.success) break
+                        // Use SmartRetryStrategy to determine intelligent backoff
+                        val smartStrategy = smartRetry.determineStrategy(result)
+                        log("Smart Retry Strategy: $smartStrategy", "I")
+                        
+                        // If no specific smart strategy, fallback to the one from RecoverySystem
+                        // But usually SmartRetryStrategy covers it
+                        if (smartStrategy is RetryStrategy.NoRetry) {
+                             // Fallback manual retry loop from original logic if smart says no, 
+                             // but actually we should trust smart strategy.
+                             // Let's force a retry if RecoverySystem explicitly asked for it
+                             val manualStrategy = RetryStrategy.Immediate(maxAttempts = strategy.maxAttempts)
+                             result = smartRetry.executeWithRetry({ executor.execute(action) }, manualStrategy)
+                        } else {
+                             result = smartRetry.executeWithRetry({ executor.execute(action) }, smartStrategy)
                         }
                     }
                     

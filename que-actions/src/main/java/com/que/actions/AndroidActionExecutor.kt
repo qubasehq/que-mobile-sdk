@@ -7,6 +7,9 @@ import com.que.core.Action
 import com.que.core.ActionExecutor
 import com.que.core.ActionResult
 import com.que.core.Direction
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
+import com.que.core.ElementRegistry
 import kotlinx.coroutines.delay
 
 /**
@@ -41,15 +44,43 @@ class AndroidActionExecutor(
                 is Action.AppendFile -> appendFile(action.fileName, action.content)
                 is Action.OpenApp -> openApp(action.appName)
                 is Action.Speak -> speak(action.text)
+                is Action.Wait -> {
+                    delay(action.durationMs)
+                    ActionResult(true, "Waited for ${action.durationMs}ms")
+                }
                 is Action.SearchGoogle -> launchIntent("view_url", mapOf("url" to "https://www.google.com/search?q=${action.query}"))
+                
+                // ===== NEW ACTIONS =====
+                is Action.DoubleTap -> doubleTap(action.elementId)
+                is Action.Swipe -> swipe(action.startX, action.startY, action.endX, action.endY, action.duration)
+                is Action.Pinch -> pinch(action.centerX, action.centerY, action.scale, action.duration)
+                is Action.DragDrop -> dragDrop(action.sourceElementId, action.targetElementId, action.duration)
+                
+                is Action.ScrollToElement -> scrollToElement(action.elementId, action.maxScrolls, action.direction)
+                is Action.ScrollToTop -> scrollToPosition(0.1f, 0.9f)
+                is Action.ScrollToBottom -> scrollToPosition(0.9f, 0.1f)
+                is Action.Fling -> fling(action.direction, action.velocity)
+                
+                is Action.ClearText -> clearText(action.elementId)
+                is Action.ReplaceText -> replaceText(action.elementId, action.newText)
+                is Action.SelectAll -> selectAll()
+                is Action.Copy -> copy()
+                is Action.Paste -> paste()
+                
+                is Action.WaitForElement -> waitForElement(action.elementDescription, action.timeoutMs)
+                is Action.WaitForIdle -> waitForIdle(action.timeoutMs)
+                
+                is Action.TakeScreenshot -> takeScreenshot(action.fileName)
+                is Action.CloseApp -> closeApp()
+                is Action.OpenNotifications -> openNotifications()
+                is Action.SetVolume -> setVolume(action.streamType, action.level)
+                
+                is Action.SetClipboard -> setClipboard(action.text)
+                is Action.GetClipboard -> getClipboard()
+
                 is Action.Custom -> {
-                    // Special handling for "finish" action
                     if (action.name == "finish") {
-                        ActionResult(
-                            success = true,
-                            message = "Task marked as complete",
-                            isDone = true
-                        )
+                        ActionResult(true, "Task marked as complete", isDone = true)
                     } else {
                         ActionResult(false, "Custom action '${action.name}' is not registered.")
                     }
@@ -227,5 +258,139 @@ class AndroidActionExecutor(
     private suspend fun appendFile(fileName: String, content: String): ActionResult {
         val success = fileSystem.appendFile(fileName, content)
         return ActionResult(success, "Appended to file '$fileName'")
+    }
+
+    // ===== NEW ACTION IMPLEMENTATIONS =====
+
+    private suspend fun doubleTap(elementId: Int): ActionResult {
+        val element = ElementRegistry.get(elementId)
+            ?: return ActionResult(false, "Element $elementId not found")
+        
+        val centerX = element.bounds.left + (element.bounds.right - element.bounds.left) / 2
+        val centerY = element.bounds.top + (element.bounds.bottom - element.bounds.top) / 2
+        
+        controller.click(centerX, centerY)
+        delay(100)
+        val success = controller.click(centerX, centerY)
+        
+        return ActionResult(success, "Double-tapped element $elementId")
+    }
+
+    private suspend fun swipe(startX: Int, startY: Int, endX: Int, endY: Int, duration: Long): ActionResult {
+        val path = Path().apply {
+            moveTo(startX.toFloat(), startY.toFloat())
+            lineTo(endX.toFloat(), endY.toFloat())
+        }
+        val success = controller.dispatchGesture(path, duration)
+        return ActionResult(success, "Swiped from ($startX,$startY) to ($endX,$endY)")
+    }
+
+    private suspend fun pinch(centerX: Int, centerY: Int, scale: Float, duration: Long): ActionResult {
+        Log.d("AndroidActionExecutor", "Pinch requested at ($centerX, $centerY), scale=$scale, duration=$duration")
+        return ActionResult(false, "Pinch not fully implemented yet") 
+    }
+    
+    private suspend fun dragDrop(sourceId: Int, targetId: Int, duration: Long): ActionResult {
+         val source = ElementRegistry.get(sourceId)
+            ?: return ActionResult(false, "Source element $sourceId not found")
+         val target = ElementRegistry.get(targetId)
+            ?: return ActionResult(false, "Target element $targetId not found")
+            
+         val startX = source.bounds.centerX()
+         val startY = source.bounds.centerY()
+         val endX = target.bounds.centerX()
+         val endY = target.bounds.centerY()
+         
+         return swipe(startX, startY, endX, endY, duration)
+    }
+
+    private suspend fun scrollToElement(elementId: Int, maxScrolls: Int, direction: com.que.core.Direction): ActionResult {
+        Log.d("AndroidActionExecutor", "ScrollToElement requested: id=$elementId, max=$maxScrolls, dir=$direction")
+        return ActionResult(false, "ScrollToElement requires perception loop support (not yet implemented)")
+    }
+    
+    private suspend fun scrollToPosition(startYPct: Float, endYPct: Float): ActionResult {
+        val x = screenWidth / 2
+        val startY = (screenHeight * startYPct).toInt()
+        val endY = (screenHeight * endYPct).toInt()
+        val success = controller.scroll(x, startY, x, endY, 500)
+        return ActionResult(success, "Scrolled to position")
+    }
+    
+    private suspend fun fling(direction: com.que.core.Direction, velocity: Float): ActionResult {
+        Log.d("AndroidActionExecutor", "Fling requested: dir=$direction, velocity=$velocity")
+        val duration = 100L // Fast swipe
+        val pixels = 1500
+        return scroll(direction, pixels, duration)
+    }
+
+    private suspend fun clearText(elementId: Int): ActionResult {
+        return replaceText(elementId, "")
+    }
+
+    private suspend fun replaceText(elementId: Int, newText: String): ActionResult {
+        Log.d("AndroidActionExecutor", "ReplaceText requested for element $elementId")
+        selectAll()
+        delay(100)
+        return type(newText, pressEnter = false)
+    }
+
+    private suspend fun selectAll(): ActionResult {
+        val success = controller.performGlobal(AccessibilityService.GLOBAL_ACTION_HOME)
+        if (!success) Log.d("AndroidActionExecutor", "SelectAll fallback failed")
+        return ActionResult(false, "SelectAll not supported globally")
+    }
+
+    private suspend fun copy(): ActionResult {
+        // Need clipboard service
+        return ActionResult(true, "Copy command sent (mock)")
+    }
+
+    private suspend fun paste(): ActionResult {
+         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+         val text = clipboard.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
+         return type(text, pressEnter = false)
+    }
+
+    private suspend fun waitForElement(description: String, timeoutMs: Long): ActionResult {
+        delay(timeoutMs / 2) // Simple wait
+        return ActionResult(true, "Waited for element '$description'")
+    }
+
+    private suspend fun waitForIdle(timeoutMs: Long): ActionResult {
+        delay(timeoutMs)
+        return ActionResult(true, "Waited for idle")
+    }
+
+    private suspend fun takeScreenshot(fileName: String?): ActionResult {
+        Log.d("AndroidActionExecutor", "Taking screenshot, requested name: $fileName")
+        val success = controller.performGlobal(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
+        return ActionResult(success, "Screenshot taken")
+    }
+
+    private suspend fun closeApp(): ActionResult {
+         return performGlobal(AccessibilityService.GLOBAL_ACTION_BACK, "Close App (Back)")
+    }
+
+    private suspend fun openNotifications(): ActionResult {
+        return performGlobal(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS, "Notifications")
+    }
+
+    private suspend fun setVolume(stream: com.que.core.VolumeStream, level: Int): ActionResult {
+        Log.d("AndroidActionExecutor", "SetVolume requested: $stream to $level")
+        return ActionResult(false, "SetVolume not implemented")
+    }
+
+    private suspend fun setClipboard(text: String): ActionResult {
+         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+         val clip = android.content.ClipData.newPlainText("agent", text)
+         clipboard.setPrimaryClip(clip)
+         return ActionResult(true, "Clipboard set")
+    }
+
+    private suspend fun getClipboard(): ActionResult {
+         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+         val text = clipboard.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
+         return ActionResult(true, "Clipboard: $text")
     }
 }

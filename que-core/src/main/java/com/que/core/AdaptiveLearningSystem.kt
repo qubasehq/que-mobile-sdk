@@ -75,35 +75,42 @@ class AdaptiveLearningSystem(
     }
     
     suspend fun generateImprovedPrompt(
-        screen: ScreenSnapshot
+        task: String,
+        screen: ScreenSnapshot,
+        history: List<AgentStepHistory>
     ): List<Message> {
         val messages = mutableListOf<Message>()
         
         // Retrieve relevant corrections
         val corrections = memory.recall(
-            query = "correction ${screen.activityName}",
+            query = "correction ${screen.activityName} $task",
             context = MemoryContext(app = screen.activityName)
         )
         
-        if (corrections.isNotEmpty()) {
+        // Also look for similar failed attempts in history
+        val failedAttempts = history.filter { 
+            !it.results.all { r -> r.success } 
+        }
+        
+        if (corrections.isNotEmpty() || failedAttempts.isNotEmpty()) {
             val feedback = buildString {
-                appendLine("Consider these past corrections for this app:")
-                corrections.take(3).forEach { mem ->
-                     try {
-                         // Attempt to decode if it is a structured correction
-                         // Or just print the value if it's text
-                         if (mem.value.startsWith("{")) {
-                             // Simplified display of correction JSON
-                             appendLine("- ${mem.value}") 
-                         } else {
-                             appendLine("- ${mem.value}")
-                         }
-                     } catch (e: Exception) {
-                         appendLine("- ${mem.value}")
-                     }
+                appendLine("Learn from past mistakes:")
+                
+                if (corrections.isNotEmpty()) {
+                    appendLine("Past Corrections:")
+                    corrections.take(2).forEach { mem ->
+                        appendLine("• ${mem.value}")
+                    }
+                }
+                
+                if (failedAttempts.isNotEmpty()) {
+                    appendLine("Recent Failed Attempts:")
+                    failedAttempts.takeLast(2).forEach { step ->
+                        appendLine("• Previously tried: ${step.modelOutput?.nextGoal} - Failed")
+                    }
                 }
             }
-            messages.add(Message(Role.USER, feedback))
+            messages.add(Message(Role.SYSTEM, feedback))
         }
         
         return messages

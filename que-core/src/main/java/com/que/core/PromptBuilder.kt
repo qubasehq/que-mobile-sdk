@@ -57,13 +57,41 @@ class PromptBuilder {
                - {"type": "speak", "text": "Hello, how can I help?"}
                - Speaks the text aloud using TTS.
                
-            9. **navigation**
+            9. **navigation** (Use specific types directly)
                - {"type": "back"}
                - {"type": "home"}
                - {"type": "enter"}
                - {"type": "switch_app"}
-               
-            10. **finish**
+
+            10. **wait**
+                - {"type": "wait", "duration": 2000}
+                - Waits for the specified duration (ms). Use when UI is loading.
+                - {"type": "wait_for_idle", "timeoutMs": 5000}
+
+            11. **advanced_touch**
+                - {"type": "double_tap", "elementId": 123}
+                - {"type": "swipe", "startX": 100, "startY": 500, "endX": 100, "endY": 200, "duration": 300}
+                - {"type": "drag_drop", "sourceElementId": 123, "targetElementId": 456}
+
+            12. **smart_scroll**
+                - {"type": "scroll_to_element", "elementId": 123, "maxScrolls": 10}
+                - {"type": "scroll_to_top"}
+                - {"type": "scroll_to_bottom"}
+
+            13. **text_ops**
+                - {"type": "clear_text", "elementId": 123}
+                - {"type": "replace_text", "elementId": 123, "newText": "New text"}
+                - {"type": "copy"}
+                - {"type": "paste"}
+
+            14. **system**
+                - {"type": "take_screenshot"}
+                - {"type": "close_app"}
+                - {"type": "open_notifications"}
+                - {"type": "set_clipboard", "text": "content"}
+                - {"type": "get_clipboard"}
+
+            15. **finish**
                - {"type": "finish", "result": "Task completed successfully."}
                - Call this when the user's goal is achieved.
 

@@ -16,7 +16,7 @@ import kotlin.random.Random
  * Based on Blurr's AudioWaveView but adapted for agent status visualization.
  */
 class CosmicWaveView @JvmOverloads constructor(
-    context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
+    context: Context, attrs: AttributeSet? = null, @Suppress("UNUSED_PARAMETER") defStyleAttr: Int = 0
 ) : View(context, attrs) {
 
     private val waveCount = 7

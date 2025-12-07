@@ -49,7 +49,7 @@ class IntelligentRecoverySystem(
         error: ActionResult,
         context: ExecutionContext
     ): RecoveryStrategy? {
-        val signature = generateErrorSignature(error, context)
+        // val signature = generateErrorSignature(error, context)
         
         // 1. Check learned patterns from memory
         // TODO: Implement actual lookup from ContextualMemory
@@ -58,6 +58,7 @@ class IntelligentRecoverySystem(
         return inferRecoveryStrategy(error, context)
     }
 
+    @Suppress("UNUSED_PARAMETER")
     suspend fun recordRecovery(
         error: ActionResult,
         strategy: RecoveryStrategy,
@@ -65,7 +66,7 @@ class IntelligentRecoverySystem(
         context: ExecutionContext
     ) {
         if (success) {
-            val signature = generateErrorSignature(error, context)
+            // val signature = generateErrorSignature(error, context)
             // Store successful strategy
             // memory.remember(...)
         }

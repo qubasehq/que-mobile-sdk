@@ -219,7 +219,9 @@ class QueAgentService : Service() {
             enableLogging = true,
             model = model,
             includeScreenshots = true,
-            retryFailedActions = true
+            retryFailedActions = true,
+            enableAdaptiveLearning = true,
+            enablePredictivePlanning = true
         )
         Log.d(TAG, "✓ Agent settings created")
         
@@ -371,6 +373,10 @@ class QueAgentService : Service() {
      * Wraps the static instance access to allow the Executor to be created
      * even if the Service isn't connected yet.
      */
+    /**
+     * Wraps the static instance access to allow the Executor to be created
+     * even if the Service isn't connected yet.
+     */
     private class ServiceGestureControllerWrapper : com.que.actions.GestureController {
         private var serviceRef: WeakReference<QueAccessibilityService>? = null
         private val checkInterval = 500L
@@ -378,13 +384,22 @@ class QueAgentService : Service() {
         private class ServiceDisconnectedException(message: String) : Exception(message)
 
         private suspend fun getService(): QueAccessibilityService {
-            return serviceRef?.get()?.takeIf { it.isConnected }
-                ?: waitForService()
+            // Check if current reference is still valid
+            val current = serviceRef?.get()
+            if (current != null && current.isConnected) {
+                return current
+            }
+            
+            // Clear stale reference
+            serviceRef = null
+            
+            // Wait for new instance
+            return waitForService()
         }
         
         private suspend fun waitForService(): QueAccessibilityService {
             repeat(20) { // 10 second timeout
-                QueAccessibilityService.instance?.let {
+                QueAccessibilityService.instance?.takeIf { it.isConnected }?.let {
                     serviceRef = WeakReference(it)
                     return it
                 }

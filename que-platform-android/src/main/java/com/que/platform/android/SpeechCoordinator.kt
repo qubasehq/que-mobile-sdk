@@ -63,6 +63,7 @@ class SpeechCoordinator private constructor(private val context: Context) {
                 Log.d(TAG, "Finished speaking: $utteranceId")
             }
             
+            @Deprecated("Deprecated in Java", ReplaceWith("onError(utteranceId, -1)"))
             override fun onError(utteranceId: String?) {
                 Log.e(TAG, "Error speaking: $utteranceId")
             }

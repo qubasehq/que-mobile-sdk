@@ -7,6 +7,8 @@ import android.graphics.Path
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.que.actions.GestureController
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
 
 /**
  * The core Android Service that powers the SDK.
@@ -22,6 +24,8 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
     var isConnected: Boolean = false
         private set
 
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob())
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         isConnected = true
@@ -29,6 +33,22 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
         debugOverlayController = DebugOverlayController(this)
         appLauncher = AppLauncher(this)
         speechCoordinator = SpeechCoordinator.getInstance(this)
+        
+        // Health check job
+        scope.launch {
+            while (isConnected) {
+                kotlinx.coroutines.delay(5000)
+                try {
+                    if (rootInActiveWindow == null) {
+                        // Log but don't immediately disconnect, could be transient
+                        android.util.Log.w("QueAccessibilityService", "Root node unavailable - service may be disconnecting or locked")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("QueAccessibilityService", "Health check failed", e)
+                    isConnected = false
+                }
+            }
+        }
     }
 
     var debugOverlayController: DebugOverlayController? = null
@@ -46,6 +66,7 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
         speechCoordinator = null
         isConnected = false
         instance = null
+        scope.cancel()
     }
 
     var currentActivityName: String = "Unknown"
@@ -62,6 +83,7 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
     override fun onInterrupt() {
         isConnected = false
         instance = null
+        scope.cancel()
     }
 
 

@@ -57,4 +57,9 @@ data class InteractiveElement(
 
 // Simple Rect to avoid Android dependency in Core if possible,
 // or we can use a platform-agnostic type.
-data class Rect(val left: Int, val top: Int, val right: Int, val bottom: Int)
+data class Rect(val left: Int, val top: Int, val right: Int, val bottom: Int) {
+    fun centerX(): Int = left + (right - left) / 2
+    fun centerY(): Int = top + (bottom - top) / 2
+    fun width(): Int = right - left
+    fun height(): Int = bottom - top
+}
