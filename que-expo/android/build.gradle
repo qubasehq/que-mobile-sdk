@@ -1,0 +1,44 @@
+buildscript {
+  // Buildscript is empty as we rely on the root project's buildscript
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
+
+android {
+  namespace "com.que.expo"
+  compileSdkVersion safeExtGet('compileSdkVersion', 34)
+  
+  defaultConfig {
+    minSdkVersion safeExtGet('minSdkVersion', 21)
+    targetSdkVersion safeExtGet('targetSdkVersion', 34)
+    versionCode 1
+    versionName "1.0"
+  }
+  
+  lintOptions {
+    abortOnError false
+  }
+  
+  sourceSets {
+    main {
+      java.srcDirs = ['src/main/java']
+    }
+  }
+}
+
+repositories {
+  mavenCentral()
+}
+
+dependencies {
+  implementation "com.facebook.react:react-android"
+  implementation "com.que.platform:android:1.0.0"
+  implementation "org.jetbrains.kotlin:kotlin-stdlib:1.8.0"
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4"
+}
+
