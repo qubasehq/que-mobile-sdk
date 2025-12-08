@@ -43,9 +43,11 @@ export default {
 
     /**
      * Start the agent with a task
+     * @param task The task description
+     * @param maxSteps Maximum number of steps (default: 30)
      */
-    async startAgent(task: string): Promise<string> {
-        return await QueMobileSDK.startAgent(task);
+    async startAgent(task: string, maxSteps: number = 30): Promise<string> {
+        return await QueMobileSDK.startAgent(task, maxSteps);
     },
 
     /**

@@ -13,6 +13,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import android.view.WindowManager
 import com.que.actions.AndroidActionExecutor
+import com.que.platform.android.CosmicOverlayController
 import com.que.core.QueAgent
 import com.que.llm.GeminiClient
 import kotlinx.coroutines.CoroutineScope
@@ -44,6 +45,7 @@ class QueAgentService : Service() {
     private lateinit var agent: QueAgent
     private lateinit var apiKey: String
     private lateinit var model: String
+    private var maxSteps: Int = 30
     private lateinit var speechCoordinator: SpeechCoordinator
     private var guidance: AndroidUserGuidance? = null
 
@@ -53,6 +55,7 @@ class QueAgentService : Service() {
         private const val EXTRA_TASK = "com.que.platform.android.EXTRA_TASK"
         private const val EXTRA_API_KEY = "com.que.platform.android.EXTRA_API_KEY"
         private const val EXTRA_MODEL = "com.que.platform.android.EXTRA_MODEL"
+        private const val EXTRA_MAX_STEPS = "com.que.platform.android.EXTRA_MAX_STEPS"
         private const val ACTION_STOP_SERVICE = "com.que.platform.android.ACTION_STOP_SERVICE"
 
         @Volatile
@@ -69,8 +72,8 @@ class QueAgentService : Service() {
         /**
          * Start the service with a task
          */
-        fun start(context: Context, task: String, apiKey: String, model: String = "gemini-2.5-flash") {
-            Log.d("QueAgentService", "Starting service with task: $task")
+        fun start(context: Context, task: String, apiKey: String, model: String = "gemini-2.5-flash", maxSteps: Int = 30) {
+            Log.d("QueAgentService", "Starting service with task: $task, maxSteps: $maxSteps")
             // Store key in memory and clear it later. This prevents it from appearing in system dumps blocks.
             sessionApiKey = apiKey
             
@@ -78,6 +81,7 @@ class QueAgentService : Service() {
                 putExtra(EXTRA_TASK, task)
                 // putExtra(EXTRA_API_KEY, apiKey) // REMOVED for security
                 putExtra(EXTRA_MODEL, model)
+                putExtra(EXTRA_MAX_STEPS, maxSteps)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -124,6 +128,7 @@ class QueAgentService : Service() {
         val task = intent?.getStringExtra(EXTRA_TASK)
         val apiKeyFromIntent = sessionApiKey // Retrieve from memory
         val model = intent?.getStringExtra(EXTRA_MODEL) ?: "gemini-2.5-flash"
+        val maxStepsFromIntent = intent?.getIntExtra(EXTRA_MAX_STEPS, 30)
 
         if (task == null || apiKeyFromIntent == null) {
             Log.e(TAG, "Missing task or API Key (expired session?)")
@@ -133,6 +138,7 @@ class QueAgentService : Service() {
         
         this.apiKey = apiKeyFromIntent
         this.model = model
+        this.maxSteps = maxStepsFromIntent ?: 30
 
         // Add new task to the queue
         if (task.isNotBlank()) {
@@ -210,10 +216,11 @@ class QueAgentService : Service() {
         Log.d(TAG, "=== INITIALIZING AGENT COMPONENTS ===")
         Log.d(TAG, "API Key: ${apiKey.take(10)}...")
         Log.d(TAG, "Model: $model")
+        Log.d(TAG, "Max Steps: $maxSteps")
         
         // Create settings
         val settings = com.que.core.AgentSettings(
-            maxSteps = 15,
+            maxSteps = maxSteps,
             maxRetries = 3,
             maxFailures = 3,
             enableLogging = true,
@@ -236,9 +243,12 @@ class QueAgentService : Service() {
         
         val gestureController = ServiceGestureControllerWrapper()
         Log.d(TAG, "✓ Gesture controller created")
+
+        val appLauncher = AppLauncher(this)
+        Log.d(TAG, "✓ App launcher created")
         
-        val executor = AndroidActionExecutor(gestureController, intentRegistry, fileSystem, this)
-        Log.d(TAG, "✓ Action executor created")
+        val executor = AndroidActionExecutor(gestureController, intentRegistry, fileSystem, this, appLauncher)
+        Log.d(TAG, "✓ Action executor created with launcher")
         
         val llm = GeminiClient(apiKey, model)
         Log.d(TAG, "✓ LLM client created")
@@ -263,9 +273,23 @@ class QueAgentService : Service() {
         
         // Forward agent state to overlay service
         serviceScope.launch {
+            // Show cosmic overlay when service starts
+            QueAccessibilityService.instance?.showCosmicOverlay()
+            
             agent.state.collect { state ->
                 Log.d(TAG, "Agent state changed: $state")
                 CosmicOverlayService.updateState(state)
+                
+                // Update system-wide cosmic overlay
+                val visualState = when (state) {
+                    is com.que.core.AgentState.Perceiving -> CosmicOverlayController.AgentVisualState.IDLE // Pulse while looking
+                    is com.que.core.AgentState.Thinking -> CosmicOverlayController.AgentVisualState.THINKING
+                    is com.que.core.AgentState.Acting -> CosmicOverlayController.AgentVisualState.ACTING
+                    is com.que.core.AgentState.Finished -> CosmicOverlayController.AgentVisualState.SUCCESS
+                    is com.que.core.AgentState.Error -> CosmicOverlayController.AgentVisualState.ERROR
+                    else -> CosmicOverlayController.AgentVisualState.IDLE
+                }
+                QueAccessibilityService.instance?.setCosmicState(visualState)
                 
                 // Log state changes
                 when (state) {
@@ -280,6 +304,8 @@ class QueAgentService : Service() {
                     }
                     is com.que.core.AgentState.Finished -> {
                         CosmicOverlayService.addLog("[FINISHED] ${state.result}")
+                        // Hide overlay after a delay if finished? 
+                        // For now keep it to show success state
                     }
                     is com.que.core.AgentState.Error -> {
                         CosmicOverlayService.addLog("[ERROR] ${state.message}")
@@ -301,6 +327,9 @@ class QueAgentService : Service() {
             agent.dispose()
         }
 
+        // Hide system-wide overlay
+        QueAccessibilityService.instance?.hideCosmicOverlay()
+        
         // Shutdown speech
         if (::speechCoordinator.isInitialized) {
             speechCoordinator.shutdown()
@@ -470,6 +499,36 @@ class QueAgentService : Service() {
             } catch (e: Exception) {
                 false
             }
+        }
+        
+        override suspend fun tap(x: Int, y: Int): Boolean {
+            return click(x, y)
+        }
+        
+        override suspend fun longPress(x: Int, y: Int, duration: Long): Boolean {
+            return try {
+                val path = android.graphics.Path().apply {
+                    moveTo(x.toFloat(), y.toFloat())
+                    lineTo(x.toFloat(), y.toFloat())
+                }
+                dispatchGesture(path, duration)
+            } catch (e: Exception) {
+                false
+            }
+        }
+        
+        override suspend fun doubleTap(x: Int, y: Int): Boolean {
+            return try {
+                click(x, y)
+                kotlinx.coroutines.delay(100)
+                click(x, y)
+            } catch (e: Exception) {
+                false
+            }
+        }
+        
+        override suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, duration: Long): Boolean {
+            return scroll(x1, y1, x2, y2, duration)
         }
     }
 }

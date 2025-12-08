@@ -17,4 +17,8 @@ interface GestureController {
     suspend fun openApp(packageName: String): Boolean // Kept for raw package access
     suspend fun launchAppByName(appName: String): Boolean // New fuzzy launcher
     suspend fun speak(text: String): Boolean
+    suspend fun tap(x: Int, y: Int): Boolean
+    suspend fun longPress(x: Int, y: Int, duration: Long): Boolean
+    suspend fun doubleTap(x: Int, y: Int): Boolean
+    suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, duration: Long): Boolean
 }

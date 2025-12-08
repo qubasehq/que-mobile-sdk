@@ -7,17 +7,18 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.modules.core.DeviceEventManagerModule
-import com.que.platform.android.QueClient
+import com.que.platform.android.QueAgentService
 import com.que.platform.android.PermissionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import android.util.Log
 
 class QueExpoModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
-    private var queClient: QueClient? = null
     private var apiKey: String? = null
     private val scope = CoroutineScope(Dispatchers.Main)
+    private val TAG = "QueExpoModule"
 
     override fun getName(): String = "QueMobileSDK"
 
@@ -32,7 +33,7 @@ class QueExpoModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             )
             promise.resolve(overlay && accessibility)
         } catch (e: Exception) {
-            promise.reject("PERMISSION_ERROR", e.message, e)
+            promise.reject("PERMISSION_ERROR", e.message ?: "Unknown permission error", e)
         }
     }
 
@@ -46,7 +47,7 @@ class QueExpoModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             PermissionManager.requestAccessibilityPermission(context)
             promise.resolve(null)
         } catch (e: Exception) {
-            promise.reject("PERMISSION_ERROR", e.message, e)
+            promise.reject("PERMISSION_ERROR", e.message ?: "Unknown permission error", e)
         }
     }
 
@@ -56,15 +57,15 @@ class QueExpoModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             apiKey = key
             promise.resolve(null)
         } catch (e: Exception) {
-            promise.reject("API_KEY_ERROR", e.message, e)
+            promise.reject("API_KEY_ERROR", e.message ?: "Unknown API key error", e)
         }
     }
 
     @ReactMethod
-    fun startAgent(task: String, promise: Promise) {
+    fun startAgent(task: String, maxSteps: Int, promise: Promise) {
         scope.launch {
             try {
-                val context = reactApplicationContext
+                val context = reactApplicationContext.applicationContext
                 val key = apiKey ?: run {
                     promise.reject("API_KEY_MISSING", "API key not set", null)
                     return@launch
@@ -75,24 +76,22 @@ class QueExpoModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     return@launch
                 }
 
-                // Send state updates
-                sendEvent("onStateChange", "Perceiving")
+                Log.d(TAG, "Starting agent with task: $task, maxSteps: $maxSteps")
+                
+                // Use QueAgentService like the native demo app
+                QueAgentService.start(
+                    context = context,
+                    task = task,
+                    apiKey = key,
+                    maxSteps = maxSteps
+                )
 
-                queClient = QueClient.Builder(context)
-                    .setApiKey(key)
-                    .build()
-
-                // Simulate agent execution
-                sendEvent("onStateChange", "Thinking")
-                kotlinx.coroutines.delay(1000)
-                sendEvent("onStateChange", "Acting")
-                kotlinx.coroutines.delay(1000)
-                sendEvent("onStateChange", "Finished")
-
-                promise.resolve("Task completed")
+                sendEvent("onStateChange", "Started")
+                promise.resolve("Agent started")
             } catch (e: Exception) {
+                Log.e(TAG, "Error starting agent", e)
                 sendEvent("onStateChange", "Error")
-                promise.reject("AGENT_ERROR", e.message, e)
+                promise.reject("AGENT_ERROR", e.message ?: "Unknown error", e)
             }
         }
     }
@@ -100,10 +99,13 @@ class QueExpoModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     @ReactMethod
     fun stopAgent(promise: Promise) {
         try {
-            queClient = null
+            val context = reactApplicationContext.applicationContext
+            QueAgentService.stop(context)
+            sendEvent("onStateChange", "Stopped")
             promise.resolve(null)
         } catch (e: Exception) {
-            promise.reject("STOP_ERROR", e.message, e)
+            Log.e(TAG, "Error stopping agent", e)
+            promise.reject("STOP_ERROR", e.message ?: "Unknown error", e)
         }
     }
 

@@ -9,5 +9,6 @@ data class AgentLoopState(
     var stopped: Boolean = false,
     var consecutiveFailures: Int = 0,
     var lastModelOutput: AgentOutput? = null,
-    var lastResults: List<ActionResult> = emptyList()
+    var lastResults: List<ActionResult> = emptyList(),
+    var planningFailures: Int = 0
 )

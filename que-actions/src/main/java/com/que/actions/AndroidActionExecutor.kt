@@ -20,7 +20,8 @@ class AndroidActionExecutor(
     private val controller: GestureController,
     private val intentRegistry: com.que.core.IntentRegistry,
     private val fileSystem: com.que.core.FileSystem,
-    private val context: Context
+    private val context: Context,
+    private val appLauncher: com.que.core.AppLauncher? = null
 ) : ActionExecutor {
 
     private val displayMetrics = context.resources.displayMetrics
@@ -79,10 +80,24 @@ class AndroidActionExecutor(
                 is Action.GetClipboard -> getClipboard()
 
                 is Action.Custom -> {
-                    if (action.name == "finish") {
-                        ActionResult(true, "Task marked as complete", isDone = true)
-                    } else {
-                        ActionResult(false, "Custom action '${action.name}' is not registered.")
+                    when {
+                        action.name == "finish" -> {
+                            ActionResult(true, "Task marked as complete", isDone = true)
+                        }
+                        action.name.startsWith("__dynamic__:") -> {
+                            // HYBRID FALLBACK: Handle dynamic gestures directly
+                            val gesture = action.name.removePrefix("__dynamic__:")
+                            executeDynamicGesture(gesture, action.params)
+                        }
+                        else -> {
+                            // Truly unknown action
+                            val validActions = Action.getAllSpecs().map { it.name }.sorted().joinToString(", ")
+                            ActionResult(
+                                success = false, 
+                                message = "Unknown action '${action.name}'. Valid actions are: $validActions",
+                                retryable = true
+                            )
+                        }
                     }
                 }
             }
@@ -154,6 +169,16 @@ class AndroidActionExecutor(
     }
 
     private suspend fun openApp(appName: String): ActionResult {
+        if (appLauncher != null) {
+            val success = appLauncher.launch(appName)
+            return if (success) {
+                ActionResult(true, "Launched app: $appName")
+            } else {
+                ActionResult(false, "Failed to launch app: $appName (Not found)")
+            }
+        }
+        
+        // Fallback to controller if no launcher injected
         val success = controller.launchAppByName(appName)
         return if (success) {
             ActionResult(true, "Opened app matching: $appName")
@@ -392,5 +417,201 @@ class AndroidActionExecutor(
          val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
          val text = clipboard.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
          return ActionResult(true, "Clipboard: $text")
+    }
+
+    /**
+     * HYBRID FALLBACK: Execute dynamic/unknown gestures based on params.
+     * This allows AI to invent gestures not in our ActionSpec registry.
+     * We try to intelligently interpret what the AI wants based on:
+     * 1. The gesture name (contains tap, click, type, etc.)
+     * 2. The parameters provided (x/y, element_id, text, etc.)
+     */
+    private suspend fun executeDynamicGesture(gesture: String, params: Map<String, String>): ActionResult {
+        Log.d("AndroidActionExecutor", "Dynamic gesture: $gesture with params: $params")
+        val g = gesture.lowercase()
+        
+        // Extract common params
+        val elementId = params["element_id"]?.toIntOrNull() 
+            ?: params["elementId"]?.toIntOrNull()
+            ?: params["id"]?.toIntOrNull()
+        val x = params["x"]?.toIntOrNull() ?: params["x"]?.toFloatOrNull()?.toInt()
+        val y = params["y"]?.toIntOrNull() ?: params["y"]?.toFloatOrNull()?.toInt()
+        val text = params["text"] ?: params["value"] ?: params["content"]
+        val startX = params["start_x"]?.toIntOrNull() ?: params["startX"]?.toIntOrNull() ?: params["x1"]?.toIntOrNull()
+        val startY = params["start_y"]?.toIntOrNull() ?: params["startY"]?.toIntOrNull() ?: params["y1"]?.toIntOrNull()
+        val endX = params["end_x"]?.toIntOrNull() ?: params["endX"]?.toIntOrNull() ?: params["x2"]?.toIntOrNull()
+        val endY = params["end_y"]?.toIntOrNull() ?: params["endY"]?.toIntOrNull() ?: params["y2"]?.toIntOrNull()
+        
+        return when {
+            // TAP-like gestures: tap, click, press, touch, select
+            g.contains("tap") || g.contains("click") || g.contains("press") || g.contains("touch") || g.contains("select") -> {
+                when {
+                    elementId != null -> {
+                        val element = ElementRegistry.get(elementId)
+                        if (element != null) {
+                            val cx = element.bounds.left + element.bounds.width() / 2
+                            val cy = element.bounds.top + element.bounds.height() / 2
+                            controller.click(cx, cy)
+                            ActionResult(true, "Dynamic tap on element $elementId at ($cx, $cy)")
+                        } else {
+                            ActionResult(false, "Element $elementId not found")
+                        }
+                    }
+                    x != null && y != null -> {
+                        controller.click(x, y)
+                        ActionResult(true, "Dynamic tap at ($x, $y)")
+                    }
+                    else -> ActionResult(false, "Tap gesture needs element_id or x,y coordinates")
+                }
+            }
+            
+            // TYPE-like gestures: type, input, enter, write, inputText
+            g.contains("type") || g.contains("input") || g.contains("enter") || g.contains("write") -> {
+                if (!text.isNullOrEmpty()) {
+                    // If element_id provided, tap it first
+                    if (elementId != null) {
+                        val element = ElementRegistry.get(elementId)
+                        if (element != null) {
+                            val cx = element.bounds.left + element.bounds.width() / 2
+                            val cy = element.bounds.top + element.bounds.height() / 2
+                            controller.click(cx, cy)
+                            delay(200)
+                        }
+                    }
+                    controller.setText(text)
+                    ActionResult(true, "Typed: '$text'")
+                } else {
+                    ActionResult(false, "Type gesture needs 'text' parameter")
+                }
+            }
+            
+            // SWIPE/DRAG-like gestures
+            g.contains("swipe") || g.contains("drag") || g.contains("slide") -> {
+                if (startX != null && startY != null && endX != null && endY != null) {
+                    controller.scroll(startX, startY, endX, endY, 300L)
+                    ActionResult(true, "Swiped from ($startX,$startY) to ($endX,$endY)")
+                } else {
+                    ActionResult(false, "Swipe gesture needs startX, startY, endX, endY")
+                }
+            }
+            
+            // SCROLL-like gestures
+            g.contains("scroll") -> {
+                val direction = params["direction"]?.lowercase() ?: "down"
+                val amount = params["amount"]?.toIntOrNull() ?: 500
+                val screenCenterX = 540
+                val screenCenterY = 1200
+                val (sx, sy, ex, ey) = when (direction) {
+                    "up" -> listOf(screenCenterX, screenCenterY - amount/2, screenCenterX, screenCenterY + amount/2)
+                    "down" -> listOf(screenCenterX, screenCenterY + amount/2, screenCenterX, screenCenterY - amount/2)
+                    "left" -> listOf(screenCenterX - amount/2, screenCenterY, screenCenterX + amount/2, screenCenterY)
+                    "right" -> listOf(screenCenterX + amount/2, screenCenterY, screenCenterX - amount/2, screenCenterY)
+                    else -> listOf(screenCenterX, screenCenterY + amount/2, screenCenterX, screenCenterY - amount/2)
+                }
+                controller.scroll(sx, sy, ex, ey, 300L)
+                ActionResult(true, "Scrolled $direction")
+            }
+            
+            // LAUNCH/OPEN APP gestures
+            g.contains("launch") || g.contains("open") || g.contains("start") -> {
+                val appName = params["app_name"] ?: params["appName"] ?: params["app"] 
+                    ?: params["name"] ?: params["package"]
+                
+                if (!appName.isNullOrEmpty()) {
+                    if (appLauncher != null) {
+                        val success = appLauncher.launch(appName)
+                        if (success) {
+                            ActionResult(true, "Launched app: $appName")
+                        } else {
+                            ActionResult(false, "Failed to launch app: $appName")
+                        }
+                    } else {
+                         // Fallback or error
+                         ActionResult(false, "AppLauncher component not available")
+                    }
+                } else {
+                     ActionResult(false, "Launch gesture needs 'app_name' parameter")
+                }
+            }
+            
+            // READ/VIEW-like gestures: just acknowledge, screen content is already provided
+            g.contains("read") || g.contains("view") || g.contains("observe") || g.contains("check") || g.contains("look") -> {
+                ActionResult(true, "Screen content is already provided in the state. Analyze the elements to find what you need.")
+            }
+            
+            // FIND-like gestures: help AI understand they should use what's in screen state
+            g.contains("find") || g.contains("search") || g.contains("locate") -> {
+                ActionResult(true, "To find elements, analyze the screen state provided. Elements are listed with their IDs, text, and bounds.")
+            }
+            
+            // CUSTOM/COMMAND-like: try to extract intent from params
+            g.contains("custom") || g.contains("command") || g.contains("execute") -> {
+                val command = params["command"] ?: params["action"] ?: ""
+                // Try to interpret the command
+                when {
+                    command.contains("tap", ignoreCase = true) || command.contains("click", ignoreCase = true) -> {
+                        if (elementId != null) {
+                            val element = ElementRegistry.get(elementId)
+                            if (element != null) {
+                                val cx = element.bounds.left + element.bounds.width() / 2
+                                val cy = element.bounds.top + element.bounds.height() / 2
+                                controller.click(cx, cy)
+                                ActionResult(true, "Executed tap from command")
+                            } else ActionResult(false, "Element not found")
+                        } else ActionResult(false, "Custom command needs element_id for tap actions")
+                    }
+                    else -> ActionResult(
+                        success = false, 
+                        message = "Cannot interpret custom command '$command'. Use standard gestures like tap, type, scroll.",
+                        retryable = true
+                    )
+                }
+            }
+            
+            // WAIT/PAUSE-like gestures
+            g.contains("wait") || g.contains("pause") || g.contains("delay") || g.contains("sleep") -> {
+                val duration = params["duration"]?.toLongOrNull() ?: params["ms"]?.toLongOrNull() ?: 2000L
+                delay(duration)
+                ActionResult(true, "Waited ${duration}ms")
+            }
+            
+            // FALLBACK: Try to infer from parameters
+            else -> {
+                when {
+                    // Has element_id -> probably wants to tap it
+                    elementId != null -> {
+                        val element = ElementRegistry.get(elementId)
+                        if (element != null) {
+                            val cx = element.bounds.left + element.bounds.width() / 2
+                            val cy = element.bounds.top + element.bounds.height() / 2
+                            controller.click(cx, cy)
+                            ActionResult(true, "Interpreted '$gesture' as tap on element $elementId")
+                        } else {
+                            ActionResult(false, "Element $elementId not found for gesture '$gesture'")
+                        }
+                    }
+                    // Has x,y -> probably wants to tap there
+                    x != null && y != null -> {
+                        controller.click(x, y)
+                        ActionResult(true, "Interpreted '$gesture' as tap at ($x, $y)")
+                    }
+                    // Has text -> probably wants to type
+                    !text.isNullOrEmpty() -> {
+                        controller.setText(text)
+                        ActionResult(true, "Interpreted '$gesture' as type: $text")
+                    }
+                    // Has swipe coords -> probably wants to swipe
+                    startX != null && startY != null && endX != null && endY != null -> {
+                        controller.scroll(startX, startY, endX, endY, 300L)
+                        ActionResult(true, "Interpreted '$gesture' as swipe")
+                    }
+                    else -> ActionResult(
+                        success = false,
+                        message = "Unknown gesture '$gesture'. Provide element_id for taps, text for typing, or coordinates.",
+                        retryable = true
+                    )
+                }
+            }
+        }
     }
 }

@@ -218,15 +218,20 @@ class QueAgent(
             log("🤔 Asking LLM for next action(s)...", "I")
             
             // PREDICTIVE PLANNING INTEGRATION
-            val agentOutput = if (settings.enablePredictivePlanning) {
+            val agentOutput = if (settings.enablePredictivePlanning && loopState.planningFailures < 2) {
                 if (currentPlan == null) {
                     log("🔮 Generating predictive plan...", "I")
                     currentPlan = planner.planAhead(task, screen, history)
                     if (currentPlan!!.steps.isNotEmpty()) {
                         log("📋 Plan generated: ${currentPlan!!.steps.size} steps", "I")
+                        loopState.planningFailures = 0 // Reset on success
                     } else {
-                        log("⚠️ Plan generation returned no steps. Fallback to standard thinking.", "W")
+                        log("⚠️ Plan generation failed (empty). Fallback to standard thinking.", "W")
                         currentPlan = null // Fallback
+                        loopState.planningFailures++
+                        if (loopState.planningFailures >= 2) {
+                            log("🚫 Disabling predictive planning for this session due to repeated failures.", "W")
+                        }
                     }
                 }
                 

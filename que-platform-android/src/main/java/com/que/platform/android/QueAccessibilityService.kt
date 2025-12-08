@@ -31,6 +31,7 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
         isConnected = true
         instance = this
         debugOverlayController = DebugOverlayController(this)
+        cosmicOverlay = CosmicOverlayController(this)
         appLauncher = AppLauncher(this)
         speechCoordinator = SpeechCoordinator.getInstance(this)
         
@@ -53,12 +54,39 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
 
     var debugOverlayController: DebugOverlayController? = null
         private set
+    
+    var cosmicOverlay: CosmicOverlayController? = null
+        private set
         
     private var appLauncher: AppLauncher? = null
     private var speechCoordinator: SpeechCoordinator? = null
+    
+    /**
+     * Show cosmic overlay when agent starts
+     */
+    fun showCosmicOverlay() {
+        cosmicOverlay?.show()
+    }
+    
+    /**
+     * Hide cosmic overlay when agent stops
+     */
+    fun hideCosmicOverlay() {
+        cosmicOverlay?.hide()
+    }
+    
+    /**
+     * Update cosmic overlay state based on agent activity
+     */
+    fun setCosmicState(state: CosmicOverlayController.AgentVisualState) {
+        cosmicOverlay?.setAgentState(state)
+    }
 
     override fun onDestroy() {
         super.onDestroy()
+        // Hide and cleanup cosmic overlay
+        cosmicOverlay?.hide()
+        cosmicOverlay = null
         // Don't shutdown speechCoordinator here as it's a singleton used by others?
         // Actually, if the service is destroyed, the context might leak if we don't be careful.
         // But SpeechCoordinator uses applicationContext.
@@ -183,5 +211,27 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
     // Implement GestureController method
     override suspend fun performGlobal(action: Int): Boolean {
         return super.performGlobalAction(action)
+    }
+    
+    override suspend fun tap(x: Int, y: Int): Boolean {
+        return click(x, y)
+    }
+    
+    override suspend fun longPress(x: Int, y: Int, duration: Long): Boolean {
+        val path = Path().apply {
+            moveTo(x.toFloat(), y.toFloat())
+            lineTo(x.toFloat(), y.toFloat())
+        }
+        return dispatchGesture(path, duration)
+    }
+    
+    override suspend fun doubleTap(x: Int, y: Int): Boolean {
+        click(x, y)
+        kotlinx.coroutines.delay(100)
+        return click(x, y)
+    }
+    
+    override suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, duration: Long): Boolean {
+        return scroll(x1, y1, x2, y2, duration)
     }
 }

@@ -167,4 +167,34 @@ private class ServiceGestureControllerWrapper : com.que.actions.GestureControlle
             false
         }
     }
+    
+    override suspend fun tap(x: Int, y: Int): Boolean {
+        return click(x, y)
+    }
+    
+    override suspend fun longPress(x: Int, y: Int, duration: Long): Boolean {
+        return try {
+            val path = android.graphics.Path().apply {
+                moveTo(x.toFloat(), y.toFloat())
+                lineTo(x.toFloat(), y.toFloat())
+            }
+            dispatchGesture(path, duration)
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    override suspend fun doubleTap(x: Int, y: Int): Boolean {
+        return try {
+            click(x, y)
+            kotlinx.coroutines.delay(100)
+            click(x, y)
+        } catch (e: Exception) {
+            false
+        }
+    }
+    
+    override suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, duration: Long): Boolean {
+        return scroll(x1, y1, x2, y2, duration)
+    }
 }

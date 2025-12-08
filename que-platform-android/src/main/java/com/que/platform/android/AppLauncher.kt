@@ -6,11 +6,13 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 
+import com.que.core.AppLauncher as CoreAppLauncher
+
 /**
  * Helper to resolve app names to package names and launch them.
  * Uses the same approach as Blurr - searches ALL installed apps, not just launcher apps.
  */
-class AppLauncher(private val context: Context) {
+class AppLauncher(private val context: Context) : CoreAppLauncher {
 
     private val packageManager: PackageManager = context.packageManager
 
@@ -18,16 +20,35 @@ class AppLauncher(private val context: Context) {
         private const val TAG = "AppLauncher"
     }
 
-    fun launch(appName: String): Boolean {
+    override fun launch(appName: String): Boolean {
         val query = appName.lowercase().trim()
         Log.d(TAG, "Attempting to launch app: $query")
+        
+        // Check for common app aliases first
+        val commonPackage = getCommonAppPackage(query)
+        if (commonPackage != null) {
+            Log.d(TAG, "Using common package for $query: $commonPackage")
+            if (launchPackage(commonPackage)) {
+                return true
+            }
+        }
         
         // Find package name from app name
         val packageName = findPackageNameFromAppName(query)
         
         if (packageName != null) {
             Log.d(TAG, "Found package: $packageName for app: $query")
-            return launchPackage(packageName)
+            if (launchPackage(packageName)) {
+                return true
+            }
+            // If that fails, try common fallbacks
+            val fallbacks = getFallbackPackages(query)
+            for (fallback in fallbacks) {
+                Log.d(TAG, "Trying fallback: $fallback")
+                if (launchPackage(fallback)) {
+                    return true
+                }
+            }
         }
         
         // If still not found, try as direct package name
@@ -38,6 +59,40 @@ class AppLauncher(private val context: Context) {
 
         Log.w(TAG, "App not found: $query")
         return false
+    }
+    
+    /**
+     * Returns common package names for well-known apps
+     */
+    private fun getCommonAppPackage(appName: String): String? {
+        return when {
+            appName.contains("setting") -> "com.android.settings"
+            appName.contains("chrome") -> "com.android.chrome"
+            appName.contains("phone") || appName.contains("dialer") -> "com.android.dialer"
+            appName.contains("message") || appName.contains("sms") -> "com.android.mms"
+            appName.contains("camera") -> "com.android.camera"
+            appName.contains("gallery") || appName.contains("photo") -> "com.android.gallery3d"
+            appName.contains("clock") || appName.contains("alarm") -> "com.android.deskclock"
+            appName.contains("contact") -> "com.android.contacts"
+            appName.contains("calendar") -> "com.android.calendar"
+            appName.contains("calculator") -> "com.android.calculator2"
+            appName.contains("file") || appName.contains("explorer") -> "com.android.documentsui"
+            else -> null
+        }
+    }
+    
+    /**
+     * Returns fallback package names if the primary package doesn't have a launch intent
+     */
+    private fun getFallbackPackages(appName: String): List<String> {
+        return when {
+            appName.contains("setting") -> listOf(
+                "com.android.settings",
+                "com.miui.securitycenter",
+                "com.xiaomi.misettings"
+            )
+            else -> emptyList()
+        }
     }
     
     /**
