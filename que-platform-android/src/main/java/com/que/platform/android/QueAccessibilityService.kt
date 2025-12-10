@@ -7,8 +7,11 @@ import android.graphics.Path
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.que.actions.GestureController
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+// import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
 
 /**
  * The core Android Service that powers the SDK.
@@ -16,20 +19,26 @@ import kotlinx.coroutines.cancel
  */
 class QueAccessibilityService : AccessibilityService(), GestureController {
 
-    companion object {
-        var instance: QueAccessibilityService? = null
-            private set
-    }
+    // Removed unsafe static instance
+    // companion object {
+    //     var instance: QueAccessibilityService? = null
+    //         private set
+    // }
     
     var isConnected: Boolean = false
         private set
+
+    // Event Flow for synchronization
+    private val _eventFlow = kotlinx.coroutines.flow.MutableSharedFlow<AccessibilityEvent>(extraBufferCapacity = 64, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    val eventFlow: kotlinx.coroutines.flow.SharedFlow<AccessibilityEvent> = _eventFlow
 
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob())
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         isConnected = true
-        instance = this
+        // instance = this // Removed unsafe static assignment
+        com.que.core.ServiceManager.registerAccessibilityService(this)
         debugOverlayController = DebugOverlayController(this)
         cosmicOverlay = CosmicOverlayController(this)
         appLauncher = AppLauncher(this)
@@ -93,7 +102,8 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
         // Let's just null out the reference.
         speechCoordinator = null
         isConnected = false
-        instance = null
+        // instance = null // Removed
+        com.que.core.ServiceManager.unregisterAccessibilityService()
         scope.cancel()
     }
 
@@ -101,16 +111,22 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
         private set
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            if (event.packageName != null && event.className != null) {
-                currentActivityName = "${event.packageName}/${event.className}"
+        if (event != null) {
+            // Emit event for synchronization
+            _eventFlow.tryEmit(event)
+            
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                if (event.packageName != null && event.className != null) {
+                    currentActivityName = "${event.packageName}/${event.className}"
+                }
             }
         }
     }
 
     override fun onInterrupt() {
         isConnected = false
-        instance = null
+        // instance = null // Removed
+        com.que.core.ServiceManager.unregisterAccessibilityService()
         scope.cancel()
     }
 

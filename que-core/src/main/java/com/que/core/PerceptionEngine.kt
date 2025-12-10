@@ -1,5 +1,7 @@
 package com.que.core
 
+import kotlinx.serialization.Serializable
+
 /**
  * Responsible for "seeing" the screen.
  */
@@ -11,6 +13,7 @@ interface PerceptionEngine {
     suspend fun capture(): ScreenSnapshot
 }
 
+@Serializable
 data class ScreenSnapshot(
     val hierarchyXml: String,
     val simplifiedDescription: String, // The text representation for the LLM
@@ -33,6 +36,7 @@ data class ScreenSnapshot(
     val detectedObjects: List<DetectedObject> = emptyList()
 )
 
+@Serializable
 data class VisualAnalysis(
     val dominantColors: List<Int>, // Color ints
     val layoutType: String, // "Grid", "List", "Form", etc.
@@ -41,6 +45,7 @@ data class VisualAnalysis(
     val imageDescriptions: List<String>
 )
 
+@Serializable
 data class DetectedObject(
     val label: String, // "Button", "Icon", "Image", etc.
     val confidence: Float,
@@ -48,6 +53,7 @@ data class DetectedObject(
     val elementId: Int?
 )
 
+@Serializable
 data class InteractiveElement(
     val id: Int,
     val bounds: Rect,
@@ -57,6 +63,7 @@ data class InteractiveElement(
 
 // Simple Rect to avoid Android dependency in Core if possible,
 // or we can use a platform-agnostic type.
+@Serializable
 data class Rect(val left: Int, val top: Int, val right: Int, val bottom: Int) {
     fun centerX(): Int = left + (right - left) / 2
     fun centerY(): Int = top + (bottom - top) / 2

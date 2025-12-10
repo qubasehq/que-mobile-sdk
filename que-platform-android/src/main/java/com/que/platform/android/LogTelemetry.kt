@@ -17,4 +17,14 @@ class LogTelemetry : Telemetry {
     override fun trackError(error: Throwable, context: Map<String, String>) {
         Log.e(TAG, "Error: ${error.message} | Context: $context", error)
     }
+
+    override fun log(level: Telemetry.LogLevel, tag: String, message: String, metadata: Map<String, String>) {
+        val fullMessage = if (metadata.isNotEmpty()) "$message | Metadata: $metadata" else message
+        when (level) {
+            Telemetry.LogLevel.DEBUG -> Log.d(tag, fullMessage)
+            Telemetry.LogLevel.INFO -> Log.i(tag, fullMessage)
+            Telemetry.LogLevel.WARN -> Log.w(tag, fullMessage)
+            Telemetry.LogLevel.ERROR -> Log.e(tag, fullMessage)
+        }
+    }
 }

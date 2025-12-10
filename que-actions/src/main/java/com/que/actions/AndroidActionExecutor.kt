@@ -21,7 +21,8 @@ class AndroidActionExecutor(
     private val intentRegistry: com.que.core.IntentRegistry,
     private val fileSystem: com.que.core.FileSystem,
     private val context: Context,
-    private val appLauncher: com.que.core.AppLauncher? = null
+    private val appLauncher: com.que.core.AppLauncher? = null,
+    private val eventMonitor: com.que.core.EventMonitor? = null
 ) : ActionExecutor {
 
     private val displayMetrics = context.resources.displayMetrics
@@ -171,10 +172,15 @@ class AndroidActionExecutor(
     private suspend fun openApp(appName: String): ActionResult {
         if (appLauncher != null) {
             val success = appLauncher.launch(appName)
-            return if (success) {
-                ActionResult(true, "Launched app: $appName")
+             if (success) {
+                // Wait for window change if possible
+                eventMonitor?.waitForEvent(
+                    eventType = android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                    timeout = 3000
+                )
+                return ActionResult(true, "Launched app: $appName")
             } else {
-                ActionResult(false, "Failed to launch app: $appName (Not found)")
+                return ActionResult(false, "Failed to launch app: $appName (Not found)")
             }
         }
         
@@ -185,6 +191,10 @@ class AndroidActionExecutor(
         } else {
             val pkgSuccess = controller.openApp(appName)
             if (pkgSuccess) {
+                eventMonitor?.waitForEvent(
+                    eventType = android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+                    timeout = 3000
+                )
                 ActionResult(true, "Opened package: $appName")
             } else {
                 ActionResult(false, "Failed to open app: $appName (Not found)")

@@ -95,7 +95,7 @@ private class ServiceGestureControllerWrapper : com.que.actions.GestureControlle
     
     private suspend fun waitForService(): QueAccessibilityService {
         repeat(20) { // 10 second timeout
-            QueAccessibilityService.instance?.let {
+            com.que.core.ServiceManager.getService<QueAccessibilityService>()?.let {
                 serviceRef = java.lang.ref.WeakReference(it)
                 return it
             }

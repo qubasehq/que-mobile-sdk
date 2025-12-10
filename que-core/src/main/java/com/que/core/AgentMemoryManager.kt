@@ -138,4 +138,12 @@ class AgentMemoryManager {
      * Get conversation size (for debugging/monitoring).
      */
     fun getConversationSize(): Int = messages.size
+    
+    /**
+     * Restore messages from checkpoint
+     */
+    fun restoreMessages(savedMessages: List<Message>) {
+        messages.clear()
+        messages.addAll(savedMessages)
+    }
 }

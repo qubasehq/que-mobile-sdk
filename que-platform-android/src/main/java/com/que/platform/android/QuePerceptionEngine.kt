@@ -9,8 +9,12 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.que.core.PerceptionEngine
 import com.que.core.ScreenSnapshot
 import com.que.vision.SemanticParser
+import com.que.core.AgentLogger
+import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * IMPROVED Android Perception Engine
@@ -28,41 +32,55 @@ class QuePerceptionEngine(
 
     private val parser = SemanticParser()
     private var previousElementIds: Set<Int> = emptySet()
+    private val TAG = "QuePerceptionEngine"
 
     override suspend fun capture(): ScreenSnapshot = coroutineScope {
-        val service = QueAccessibilityService.instance
-            ?: throw IllegalStateException("QueAccessibilityService is not running")
+        val startTime = System.currentTimeMillis()
+        AgentLogger.d(TAG, "Starting capture...")
 
-        // CONCURRENT DATA GATHERING (like Blurr)
-        val rootNodeDeferred = async { service.getRootNode() }
-        val keyboardDeferred = async { isKeyboardOpen() }
-        val activityDeferred = async { service.currentActivityName }
-        val screenshotDeferred = async { service.captureScreenshot() }
-
-        // Await all concurrently
-        val root = rootNodeDeferred.await()
-            ?: throw IllegalStateException("Root node is null")
-        val isKeyboard = keyboardDeferred.await()
-        val activity = activityDeferred.await()
-        val bitmap = screenshotDeferred.await()
-
-        // Get scroll information
-        val (scrollAbove, scrollBelow) = getScrollInfo(root)
-
-        // Capture screenshot bytes
-        val screenshotBytes = bitmap?.let { bmp ->
-            try {
-                val stream = java.io.ByteArrayOutputStream()
-                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 50, stream)
-                stream.toByteArray()
-            } finally {
-                bmp.recycle()
-            }
+        // Get service via new ServiceManager safety wrapper
+        val service = com.que.core.ServiceManager.getService<QueAccessibilityService>() ?: run {
+            AgentLogger.e(TAG, "Service disconnected during capture")
+            throw IllegalStateException("Accessibility service not connected")
         }
 
+            // CONCURRENT DATA GATHERING (like Blurr)
+            val rootNodeDeferred = async { service.getRootNode() }
+            val keyboardDeferred = async { isKeyboardOpen() }
+            val activityDeferred = async { service.currentActivityName }
+            val screenshotDeferred = async { service.captureScreenshot() }
+
+            // Await all concurrently
+            val root = rootNodeDeferred.await()
+                ?: throw IllegalStateException("Root node is null")
+            val isKeyboard = keyboardDeferred.await()
+            val activity = activityDeferred.await()
+            val bitmap = screenshotDeferred.await()
+
+            // Get scroll information
+            val (scrollAbove, scrollBelow) = getScrollInfo(root)
+
+            // Capture screenshot bytes
+            // Capture screenshot bytes
+            val screenshotBytes = withContext(Dispatchers.IO) {
+                bitmap?.let { bmp ->
+                    try {
+                        val stream = ByteArrayOutputStream()
+                        bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 50, stream)
+                        stream.toByteArray()
+                    } finally {
+                        bmp.recycle()
+                    }
+                }
+            }
+
+
+        // Parse UI hierarchy
         // Parse UI hierarchy
         val (width, height) = getScreenDimensions()
-        var snapshot = parser.parse(root, width, height)
+        var snapshot = withContext(Dispatchers.Default) {
+             parser.parse(root, width, height)
+        }
         
         // Detect new elements
         val currentIds = snapshot.interactiveElements.map { it.id }.toSet()

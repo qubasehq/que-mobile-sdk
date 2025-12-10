@@ -11,28 +11,32 @@ sealed class RetryStrategy {
 
 class SmartRetryStrategy {
     fun determineStrategy(error: ActionResult): RetryStrategy {
+        val msg = error.message.lowercase()
         return when {
-            // Fatal errors (logic errors) should not be retried blindly
-            error.message.contains("not found", ignoreCase = true) -> RetryStrategy.NoRetry
-            error.message.contains("invalid", ignoreCase = true) -> RetryStrategy.NoRetry
+            // Logic/Validation errors - definitely fatal
+            msg.contains("invalid parameter") || 
+            msg.contains("unsupported action") -> RetryStrategy.NoRetry
             
-            // Rate limits need exponential backoff
-            error.message.contains("rate limit", ignoreCase = true) -> {
+            // Rate limits - standard backoff
+            msg.contains("rate limit") || msg.contains("429") -> {
                 RetryStrategy.ExponentialBackoff(initialDelay = 5000, maxAttempts = 3)
             }
             
-            // Network issues need backoff but more attempts
-            error.message.contains("network", ignoreCase = true) || 
-            error.message.contains("connection", ignoreCase = true) -> {
+            // Network/Connection - aggressive backoff
+            msg.contains("network") || 
+            msg.contains("connection") || 
+            msg.contains("socket") ||
+            msg.contains("timeout") -> {
                 RetryStrategy.ExponentialBackoff(initialDelay = 2000, maxAttempts = 5)
             }
             
-            // Timeouts can be retried with linear backoff
-            error.message.contains("timeout", ignoreCase = true) -> {
-                RetryStrategy.LinearBackoff(delay = 3000, maxAttempts = 2)
+            // Element Not Found - THIS WAS THE BUG. 
+            // Often caused by animation lag or screen transition. Should retry briefly.
+            msg.contains("not found") -> {
+                RetryStrategy.LinearBackoff(delay = 1000, maxAttempts = 3)
             }
             
-            // Generic retryable failures (e.g. click missed)
+            // Interaction failed (e.g. click didn't register) - fast retry
             !error.success -> {
                 RetryStrategy.Immediate(maxAttempts = 2)
             }
@@ -65,6 +69,7 @@ class SmartRetryStrategy {
                 var delay = strategy.initialDelay
                 
                 while (!result.success && attempts < strategy.maxAttempts) {
+                    // Log retry?
                     kotlinx.coroutines.delay(delay)
                     result = action()
                     attempts++
@@ -78,6 +83,7 @@ class SmartRetryStrategy {
                 var attempts = 1
                 
                 while (!result.success && attempts < strategy.maxAttempts) {
+                     // Log retry?
                     kotlinx.coroutines.delay(strategy.delay)
                     result = action()
                     attempts++

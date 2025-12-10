@@ -22,6 +22,9 @@ sealed class RecoveryStrategy {
     data class RestartApp(val appName: String) : RecoveryStrategy()
     
     @Serializable
+    data class RestoreFromCheckpoint(val checkpoint: AgentCheckpoint) : RecoveryStrategy()
+    
+    @Serializable
     data object Abandon : RecoveryStrategy()
 }
 
@@ -56,6 +59,42 @@ class IntelligentRecoverySystem(
         
         // 2. Use heuristic-based recovery
         return inferRecoveryStrategy(error, context)
+    }
+    
+    /**
+     * Handle interruption-based recovery
+     */
+    suspend fun handleInterruption(
+        interruptionType: InterruptionType,
+        context: ExecutionContext,
+        checkpoint: AgentCheckpoint?
+    ): RecoveryStrategy? {
+        return when (interruptionType) {
+            InterruptionType.DEVICE_LOCKED -> {
+                // Wait for device to be unlocked, adjust attempts based on context
+                val maxAttempts = if (context.consecutiveFailures > 3) 5 else 10
+                RecoveryStrategy.Retry(maxAttempts = maxAttempts, delay = 5000)
+            }
+            
+            InterruptionType.PERMISSION_REVOKED -> {
+                // Cannot recover automatically
+                RecoveryStrategy.Abandon
+            }
+            
+            InterruptionType.USER_PAUSE -> {
+                // If we have a checkpoint, we can restore from it when resumed
+                if (checkpoint != null) {
+                    RecoveryStrategy.RestoreFromCheckpoint(checkpoint)
+                } else {
+                    RecoveryStrategy.Retry(maxAttempts = 1, delay = 1000)
+                }
+            }
+            
+            else -> {
+                // Default retry
+                RecoveryStrategy.Retry(maxAttempts = 1, delay = 1000)
+            }
+        }
     }
 
     @Suppress("UNUSED_PARAMETER")

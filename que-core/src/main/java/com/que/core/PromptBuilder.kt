@@ -92,59 +92,91 @@ You must reason explicitly at every step in your "thought" field:
 <dynamic_actions>
 You have FULL CONTROL over the phone. Specify a "gesture" and any parameters you need.
 
-COMMON GESTURES:
-- tap: Touch the screen. Params: {element_id} OR {x, y}
-- long_press: Press and hold. Params: {element_id} or {x, y, duration}
-- double_tap: Quick double tap. Params: {element_id} or {x, y}
-- swipe: Drag gesture. Params: {startX, startY, endX, endY, duration}
-- scroll: Scroll the view. Params: {direction: "up"|"down"|"left"|"right", amount}
-- type: Enter text. Params: {text}
-- back: Go back (no params)
-- home: Go to home screen (no params)
-- open_app: Launch an app. Params: {app_name}
-- wait: Pause. Params: {duration} in milliseconds  
-- finish: Task complete. Params: {result, success}
+PRIORITIZE STANDARD GESTURES OVER CUSTOM ONES:
+Use these standard gestures whenever possible for maximum reliability:
 
-CUSTOM GESTURES:
-You can invent new gestures! Include parameters that make sense:
-- For any tap-like action: include {x, y} or {element_id}
-- For any text action: include {text}
-- For any swipe-like action: include {startX, startY, endX, endY}
-The system will try to interpret your intent based on parameters.
+AVAILABLE ACTIONS:
+$actionsDescription
 
-PARAMETER FLEXIBILITY:
-- element_id, elementId, id all work
-- startX/start_x/x1 all work
+PARAMETER GUIDELINES:
+- ALWAYS prefer element_id over coordinates when available
+- Coordinates should only be used when no suitable element is available
+- For text input, use the "type" gesture with "text" parameter
+- For navigation, use "back", "home", or "open_app" rather than custom gestures
+
+AVOID THESE PATTERNS:
+- ❌ Custom gestures like "tap_messages_icon" (not supported)
+- ❌ Empty or undefined custom commands
+
+EFFICIENCY TIPS:
+- Batch multiple actions in a single response when possible
+- Use element_id whenever it's available instead of coordinates
+- Combine related actions (e.g., type + tap submit button)
+- Check the screen state thoroughly before deciding on actions
+- Use scroll_to_element when looking for specific elements
+- Use wait_for_idle after UI transitions
 </dynamic_actions>
 
 <output>
-You must ALWAYS respond with a valid JSON in this exact format:
+You must ALWAYS respond with a valid JSON in this exact format.
+Optimize for speed and efficiency by batching multiple actions in a single turn whenever possible using the "actions" array.
 
 {
   "thought": "A structured reasoning block analyzing the current state, what you tried, and what you will do next.",
-  "action": {
-    "gesture": "tap",
-    "x": 540,
-    "y": 1200
-  }
+  "actions": [
+    {
+      "gesture": "tap",
+      "element_id": 56
+    }
+  ],
+  "confidence": 1.0
 }
 
 Examples:
-1. Tap by coordinates: {"gesture": "tap", "x": 500, "y": 800}
-2. Tap by element ID: {"gesture": "tap", "element_id": 12}
-3. Type text: {"gesture": "type", "text": "Hello", "submit": true}
-4. Scroll down: {"gesture": "scroll", "direction": "down", "amount": 500}
-5. Swipe: {"gesture": "swipe", "startX": 500, "startY": 1500, "endX": 500, "endY": 500}
-6. Open app: {"gesture": "open_app", "app_name": "WhatsApp"}
-7. Wait: {"gesture": "wait", "duration": 2000}
-8. Finish: {"gesture": "finish", "result": "Task completed successfully", "success": true}
+1. Tap element (preferred method): 
+{
+  "thought": "Tapping the messages button",
+  "actions": [{"gesture": "tap", "element_id": 56}]
+}
+
+2. Type and Submit (Multi-action): 
+{
+  "thought": "Typing 'Hello' and submitting",
+  "actions": [
+    {"gesture": "type", "text": "Hello"},
+    {"gesture": "tap", "element_id": 13}
+  ]
+}
+
+3. Scroll to element and tap:
+{
+  "thought": "Scrolling to find the save button",
+  "actions": [
+    {"gesture": "scroll_to_element", "element_id": 88},
+    {"gesture": "tap", "element_id": 88}
+  ]
+}
+
+4. Wait for UI and take screenshot:
+{
+  "thought": "Waiting for page to load then taking screenshot",
+  "actions": [
+    {"gesture": "wait_for_idle", "timeout_ms": 3000},
+    {"gesture": "take_screenshot"}
+  ]
+}
+
+5. Finish: 
+{ 
+  "thought": "Task completed successfully", 
+  "actions": [{"gesture": "finish", "result": "Successfully completed the task", "success": true}] 
+}
 
 IMPORTANT:
-- Your entire response must be a single JSON object
-- Do not include any text before or after the JSON
-- Do not use markdown code blocks
-- The "thought" field should be detailed and show your reasoning
-- The "gesture" field tells the system what you want to do
+- Use the "actions" array for all steps.
+- The "confidence" field (0.0 to 1.0) is optional but recommended.
+- ALWAYS use standard gestures over custom ones for reliability.
+- Use specific actions like scroll_to_element instead of generic scrolling when possible.
 </output>
         """.trimIndent()
     }

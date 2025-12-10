@@ -27,4 +27,5 @@ android {
 dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
+    // Removed test dependencies as requested
 }

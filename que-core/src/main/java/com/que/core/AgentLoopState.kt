@@ -1,9 +1,12 @@
 package com.que.core
 
+import kotlinx.serialization.Serializable
+
 /**
  * Internal state tracking for the agent loop.
  * Tracks progress, failures, and previous outputs.
  */
+@Serializable
 data class AgentLoopState(
     var nSteps: Int = 0,
     var stopped: Boolean = false,

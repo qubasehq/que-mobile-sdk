@@ -36,9 +36,19 @@ class GeminiClient(
     }
 
     private val circuitBreaker = com.que.core.CircuitBreaker()
+    private var lastRequestTime = 0L
+    private val minRequestIntervalMs = 2000L // Cap at 30 RPM (Safety margin for 60 RPM limit)
 
     override suspend fun generate(messages: List<Message>): LLMResponse {
         return withContext(Dispatchers.IO) {
+            // Apply Rate Limiting
+            val now = System.currentTimeMillis()
+            val timeSinceLast = now - lastRequestTime
+            if (timeSinceLast < minRequestIntervalMs) {
+                kotlinx.coroutines.delay(minRequestIntervalMs - timeSinceLast)
+            }
+            lastRequestTime = System.currentTimeMillis()
+
             circuitBreaker.execute {
                 retryWithBackoff {
                     performRequest(messages)

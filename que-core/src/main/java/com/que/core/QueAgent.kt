@@ -1,6 +1,7 @@
 package com.que.core
 
 import android.util.Log
+import com.que.core.AgentLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,6 +19,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import com.que.core.RecoveryStrategy
+import com.que.core.InterruptionType
+import com.que.core.InterruptionDetector
 
 /**
  * COMPLETELY REWRITTEN Agent Loop Logic
@@ -51,14 +54,17 @@ class QueAgent(
     private val guidance: UserGuidance? = null
 ) : Agent {
 
+    private val TAG = "QueAgent"
+    private val interruptionDetector = InterruptionDetector(context)
+
     fun dispose() {
         scope.cancel()
         try {
-            memory.clear() // Assuming memory has clear()
+            memory.clear()
             history.clear()
-            // ElementRegistry.clear() - ElementRegistry is a singleton, might need care
+            ElementRegistry.clear()
         } catch (e: Exception) {
-            log("Error disposing agent: ${e.message}", "E")
+            AgentLogger.e(TAG, "Error disposing agent: ${e.message}")
         }
     }
 
@@ -72,6 +78,10 @@ class QueAgent(
     private val memory = AgentMemoryManager()
     private val loopState = AgentLoopState()
     private val history = mutableListOf<AgentStepHistory>()
+    
+    // Pause/Resume functionality
+    private var isPaused: Boolean = false
+    private var pauseResumeSignal = kotlinx.coroutines.sync.Mutex()
     
     // NEW: Predictive Planner
     private val planner: PredictivePlanner = PredictivePlanner(llm)
@@ -96,10 +106,10 @@ class QueAgent(
     private fun log(message: String, level: String = "D") {
         if (settings.enableLogging) {
             when (level) {
-                "E" -> Log.e("QueAgent", message)
-                "W" -> Log.w("QueAgent", message)
-                "I" -> Log.i("QueAgent", message)
-                else -> Log.d("QueAgent", message)
+                "E" -> AgentLogger.e(TAG, message)
+                "W" -> AgentLogger.w(TAG, message)
+                "I" -> AgentLogger.i(TAG, message)
+                else -> AgentLogger.d(TAG, message)
             }
         }
     }
@@ -110,11 +120,12 @@ class QueAgent(
      *
      * @param instruction The high-level task for the agent to perform.
      */
-    override suspend fun run(instruction: String) {
+    override suspend fun run(instruction: String): AgentState {
         stop()
-        
+
         currentJob = scope.launch {
             try {
+                // ... setup ...
                 // Reset state
                 loopState.nSteps = 0
                 loopState.stopped = false
@@ -127,15 +138,17 @@ class QueAgent(
                 
                 // Initialize memory with task
                 val systemPrompt = promptBuilder.buildSystemPrompt()
+                // Update system prompt with fresh builder (to get new multi-action instructions)
                 memory.addTask(instruction, systemPrompt)
                 stuckDetector.clear()
+                AgentLogger.d(TAG, "Starting step ${loopState.nSteps}")
                 
                 loop(instruction)
             } catch (e: kotlinx.coroutines.CancellationException) {
-                log("Task cancelled", "I")
+                AgentLogger.i(TAG, "Task cancelled")
                 _state.value = AgentState.Idle
             } catch (e: Exception) {
-                log("Agent crashed: ${e.message}", "E")
+                AgentLogger.e(TAG, "Critical error in agent loop", e)
                 _state.value = AgentState.Error("Agent crashed", e)
                 if (settings.enableSpeech) {
                     speech?.speak("I crashed. Sorry.")
@@ -144,12 +157,35 @@ class QueAgent(
         }
         
         currentJob?.join()
+        return _state.value
     }
 
     override fun stop() {
         currentJob?.cancel()
         loopState.stopped = true
+        isPaused = false
         _state.value = AgentState.Idle
+    }
+    
+    override fun pause() {
+        isPaused = true
+        _state.value = AgentState.Thinking("Paused")
+    }
+    
+    override fun resume() {
+        isPaused = false
+        // Resume is handled in the main loop
+    }
+    
+    override fun isPaused(): Boolean = isPaused
+    
+    /**
+     * Waits while the agent is paused, checking periodically
+     */
+    private suspend fun waitForResume() {
+        while (isPaused && !loopState.stopped) {
+            kotlinx.coroutines.delay(100)
+        }
     }
 
     /**
@@ -161,6 +197,15 @@ class QueAgent(
         log("Max Steps: ${settings.maxSteps}", "I")
         
         while (!loopState.stopped && loopState.nSteps < settings.maxSteps) {
+            // Check for pause state
+            if (isPaused) {
+                _state.value = AgentState.Thinking("Paused - waiting for resume")
+                waitForResume()
+                if (loopState.stopped) break
+                _state.value = AgentState.Thinking("Resumed")
+                kotlinx.coroutines.delay(1000) // Give time to settle
+            }
+            
             loopState.nSteps++
             val stepStartTime = System.currentTimeMillis()
             val stepSpeechLog = mutableListOf<String>()
@@ -178,211 +223,32 @@ class QueAgent(
             // Show progress
             guidance?.showProgress(loopState.nSteps, settings.maxSteps, "Starting step ${loopState.nSteps}")
 
-            // 1. SENSE: Observe the current state of the screen
-            log("👀 Sensing screen state...", "I")
-            _state.value = AgentState.Perceiving
-            val screen = perception.capture()
-            
-            // Check for stuck state
-            stuckDetector.recordState(screen)
-            if (stuckDetector.isStuck()) {
-                log("⚠️ Agent appears stuck in the same state for too long!", "W")
-                val recovery = stuckDetector.suggestRecovery(screen)
-                if (recovery != null && recovery is RecoveryStrategy.AlternativeAction) {
-                    log("♻️ Attempting to unstick via Back action", "I")
-                    executor.execute(recovery.actions.first())
-                    kotlinx.coroutines.delay(1000)
-                    // Skip rest of loop to perceive again
-                    continue
-                }
+            // 1. CHECK FOR INTERRUPTIONS
+            val interruption = interruptionDetector.detectInterruption()
+            if (interruption != null) {
+                handleInterruption(interruption)
             }
-
-            // NEW: Recall memories
-            val memoryContext = MemoryContext(app = screen.activityName)
-            val relevantMemories = contextualMemory.recall(task, memoryContext)
-
-            // 2. THINK (Prepare Prompt): Update memory with results of LAST step
-            // and create new prompt using CURRENT screen state
-            log("🧠 Preparing prompt with memory...", "I")
-            _state.value = AgentState.Thinking()
-            memory.addStateMessage(
-                modelOutput = loopState.lastModelOutput,
-                results = loopState.lastResults,
-                stepInfo = StepInfo(loopState.nSteps, settings.maxSteps),
-                screen = screen,
-                history = history, // Pass history for context
-                relevantMemories = relevantMemories
-            )
-
-            // 3. THINK (Get Decision): Send prepared messages to LLM
-            log("🤔 Asking LLM for next action(s)...", "I")
             
-            // PREDICTIVE PLANNING INTEGRATION
-            val agentOutput = if (settings.enablePredictivePlanning && loopState.planningFailures < 2) {
-                if (currentPlan == null) {
-                    log("🔮 Generating predictive plan...", "I")
-                    currentPlan = planner.planAhead(task, screen, history)
-                    if (currentPlan!!.steps.isNotEmpty()) {
-                        log("📋 Plan generated: ${currentPlan!!.steps.size} steps", "I")
-                        loopState.planningFailures = 0 // Reset on success
-                    } else {
-                        log("⚠️ Plan generation failed (empty). Fallback to standard thinking.", "W")
-                        currentPlan = null // Fallback
-                        loopState.planningFailures++
-                        if (loopState.planningFailures >= 2) {
-                            log("🚫 Disabling predictive planning for this session due to repeated failures.", "W")
-                        }
-                    }
-                }
-                
-                if (currentPlan != null && currentPlanStepIndex < currentPlan!!.steps.size) {
-                    val step = currentPlan!!.steps[currentPlanStepIndex]
-                    log("👉 Executing planned step ${currentPlanStepIndex + 1}/${currentPlan!!.steps.size}: ${step.description}", "I")
-                    
-                    AgentOutput(
-                        thought = "Following plan: ${step.description}",
-                        nextGoal = step.description,
-                        actions = listOf(step.action),
-                        confidence = currentPlan!!.confidence
-                    )
-                } else {
-                    currentPlan = null // Plan finished or invalid, fallback
-                    val messages = memory.getMessages().toMutableList()
-                    if (learningSystem != null) {
-                        messages.addAll(learningSystem.generateImprovedPrompt(task, screen, history))
-                    }
-                    generateAgentOutput(messages)
-                }
-            } else {
-                val messages = memory.getMessages().toMutableList()
-                if (learningSystem != null) {
-                    messages.addAll(learningSystem.generateImprovedPrompt(task, screen, history))
-                }
-                generateAgentOutput(messages)
-            }
-
-            // Handle LLM Failure with corrective feedback
-            if (agentOutput == null) {
-                log("❌ LLM failed to return valid output", "E")
-                loopState.consecutiveFailures++
-                memory.addCorrectionNote(
-                    "Your previous output was not valid JSON. Please ensure your response is correctly formatted with 'thought', 'nextGoal', and 'actions' array."
-                )
-                
-                if (loopState.consecutiveFailures >= settings.maxRetries) {
-                    log("❌ Agent failed too many times consecutively. Stopping.", "E")
-                    _state.value = AgentState.Error("Agent failed after ${settings.maxRetries} consecutive failures")
-                    speak("I failed to complete the task after multiple attempts.")
-                    
-                    // Record failed step
-                    history.add(
-                        AgentStepHistory(
-                            step = loopState.nSteps,
-                            modelOutput = null,
-                            results = emptyList(),
-                            screenState = screen,
-                            timestamp = stepStartTime,
-                            durationMs = System.currentTimeMillis() - stepStartTime,
-                            failureCount = loopState.consecutiveFailures,
-                            speechLog = stepSpeechLog,
-                            systemNotes = listOf("Max failures reached")
-                        )
-                    )
-                    break
-                }
-                
-                speak("I'm having trouble understanding. Retrying...")
-                kotlinx.coroutines.delay(1000)
+            // 2. SENSE
+            val screen = sense()
+            if (screen == null) {
+                // If sense returns null (e.g. stuck and recovering), skip this iteration
                 continue
             }
-            
-            // Reset failure counter on success
-            loopState.consecutiveFailures = 0
-            loopState.lastModelOutput = agentOutput
-            log("🤖 LLM decided: ${agentOutput.nextGoal}", "I")
-            log("   Thought: ${agentOutput.thought}", "I")
-            log("   Actions: ${agentOutput.actions.size}", "I")
-            
-            guidance?.showDecision(agentOutput.thought, agentOutput.confidence)
-            if (agentOutput.confidence < 0.6f) {
-                // Low confidence handling could go here
-                // e.g. guidance?.askForHelp(...)
+
+            // 2 & 3. THINK
+            val agentOutput = think(task, screen)
+            if (agentOutput == null) {
+                // If think failed (retries exhausted), handle failure state in think() or check here
+                // think() handles internal retries and failure logging, so if null, we stop or retry as appropriate
+                if (_state.value is AgentState.Error) break
+                // If it's just a retry loop inside loop, we continue
+                continue
             }
 
-            // 4. ACT: Execute ALL actions from the LLM
-            log("💪 Executing ${agentOutput.actions.size} action(s)...", "I")
-            val actionResults = mutableListOf<ActionResult>()
-            
-            for ((index, action) in agentOutput.actions.withIndex()) {
-                _state.value = AgentState.Acting("${action.javaClass.simpleName} (${index + 1}/${agentOutput.actions.size})")
-                    log("Exec: $action", "D")
-                    // Use Intelligent Recovery
-                    val result = executeActionWithRecovery(action)
-                    actionResults.add(result)
-                    
-                    if (result.success) {
-                        consecutiveFailures = 0 // Reset on success
-                    } else {
-                        consecutiveFailures++
-                    }
-                
-                log("  - Action '${action.javaClass.simpleName}': ${if (result.success) "✓" else "✗"} ${result.message}", 
-                    if (result.success) "I" else "W")
-                
-                // Stop executing further actions if one fails
-                if (!result.success) {
-                    log("  - 🛑 Action failed. Stopping current step's execution.", "W")
-                    break
-                }
-            }
-            
-            loopState.lastResults = actionResults
-
-            // 5. RECORD: Save complete step to structured history
-            val stepDuration = System.currentTimeMillis() - stepStartTime
-            history.add(
-                AgentStepHistory(
-                    step = loopState.nSteps,
-                    modelOutput = agentOutput,
-                    results = actionResults,
-                    screenState = screen,
-                    timestamp = stepStartTime,
-                    durationMs = stepDuration,
-                    failureCount = loopState.consecutiveFailures, // Should be 0 here if successful
-                    speechLog = stepSpeechLog
-                )
-            )
-            
-            // Learn from success
-            if (actionResults.all { it.success }) {
-                scope.launch {
-                    val key = "success_${screen.activityName}_${loopState.nSteps}"
-                    val value = "In ${screen.activityName}, I executed actions: ${agentOutput.actions.map { it.javaClass.simpleName }} to achieve '${agentOutput.nextGoal}'"
-                    contextualMemory.remember(key, value, MemoryContext(app = screen.activityName))
-                }
-            }
-            
-            // Advance plan if successful
-            if (actionResults.all { it.success } && currentPlan != null) {
-                currentPlanStepIndex++
-                if (currentPlanStepIndex >= currentPlan!!.steps.size) {
-                    log("🏁 Predictive plan completed.", "I")
-                    currentPlan = null
-                }
-            } else if (currentPlan != null) {
-                log("🛑 Plan step failed. Invalidating plan.", "W")
-                currentPlan = null // Stop following plan on failure
-            }
-            
-            log("⏱️ Step completed in ${stepDuration}ms", "I")
-
-            // Check for task completion
-            if (actionResults.any { it.isDone }) {
-                log("✅ Agent finished the task!", "I")
-                _state.value = AgentState.Finished("Task completed successfully")
-                loopState.stopped = true
-                speak("Task finished.")
-            }
+            // 4 & 5. ACT & RECORD
+            val shouldStop = act(agentOutput, screen, stepStartTime, stepSpeechLog)
+            if (shouldStop) break
 
             // Small delay between steps
             kotlinx.coroutines.delay(1000)
@@ -615,5 +481,296 @@ class QueAgent(
     /**
      * Get current loop state (for monitoring)
      */
+    /**
+     * PHASE 1: SENSE
+     * Captures screen state and checks for stuck conditions.
+     * Returns null if the agent should skip the rest of the loop (e.g. recovering from stuck state).
+     */
+    private suspend fun sense(): ScreenSnapshot? {
+        log("👀 Sensing screen state...", "I")
+        _state.value = AgentState.Perceiving
+        val screen = perception.capture()
+
+        // Check for stuck state
+        stuckDetector.recordState(screen)
+        if (stuckDetector.isStuck()) {
+            log("⚠️ Agent appears stuck in the same state for too long!", "W")
+            val recovery = stuckDetector.suggestRecovery(screen)
+            if (recovery != null && recovery is RecoveryStrategy.AlternativeAction) {
+                log("♻️ Attempting to unstick via Back action", "I")
+                executor.execute(recovery.actions.first())
+                kotlinx.coroutines.delay(1000)
+                // Return null to signal the loop to continue/retry
+                return null
+            }
+        }
+        return screen
+    }
+
+    /**
+     * PHASE 2: THINK
+     * Prepares memory, handles predictive planning, and queries the LLM.
+     */
+    private suspend fun think(task: String, screen: ScreenSnapshot): AgentOutput? {
+        // Recall memories
+        val memoryContext = MemoryContext(app = screen.activityName)
+        val relevantMemories = contextualMemory.recall(task, memoryContext)
+
+        // Prepare Prompt
+        log("🧠 Preparing prompt with memory...", "I")
+        _state.value = AgentState.Thinking()
+        memory.addStateMessage(
+            modelOutput = loopState.lastModelOutput,
+            results = loopState.lastResults,
+            stepInfo = StepInfo(loopState.nSteps, settings.maxSteps),
+            screen = screen,
+            history = history,
+            relevantMemories = relevantMemories
+        )
+
+        log("🤔 Asking LLM for next action(s)...", "I")
+
+        // Predictive Planning Integration
+        val agentOutput = if (settings.enablePredictivePlanning && loopState.planningFailures < 2) {
+            executePredictivePlanning(task, screen)
+        } else {
+            generateStandardOutput(task, screen)
+        }
+
+        // Handle LLM Failure
+        if (agentOutput == null) {
+            handleThinkFailure(screen)
+            return null
+        }
+
+        // Success - clean up failure state
+        loopState.consecutiveFailures = 0
+        loopState.lastModelOutput = agentOutput
+        log("🤖 LLM decided: ${agentOutput.nextGoal}", "I")
+        log("   Thought: ${agentOutput.thought}", "I")
+        log("   Actions: ${agentOutput.actions.size}", "I")
+        
+        guidance?.showDecision(agentOutput.thought, agentOutput.confidence)
+        
+        return agentOutput
+    }
+
+    private suspend fun executePredictivePlanning(task: String, screen: ScreenSnapshot): AgentOutput? {
+        if (currentPlan == null) {
+            log("🔮 Generating predictive plan...", "I")
+            currentPlan = planner.planAhead(task, screen, history)
+            if (currentPlan!!.steps.isNotEmpty()) {
+                log("📋 Plan generated: ${currentPlan!!.steps.size} steps", "I")
+                loopState.planningFailures = 0
+            } else {
+                log("⚠️ Plan generation failed (empty). Fallback to standard thinking.", "W")
+                currentPlan = null
+                loopState.planningFailures++
+                if (loopState.planningFailures >= 2) {
+                    log("🚫 Disabling predictive planning due to repeated failures.", "W")
+                }
+            }
+        }
+
+        if (currentPlan != null && currentPlanStepIndex < currentPlan!!.steps.size) {
+            val step = currentPlan!!.steps[currentPlanStepIndex]
+            log("👉 Executing planned step ${currentPlanStepIndex + 1}/${currentPlan!!.steps.size}: ${step.description}", "I")
+            return AgentOutput(
+                thought = "Following plan: ${step.description}",
+                nextGoal = step.description,
+                actions = listOf(step.action),
+                confidence = currentPlan!!.confidence
+            )
+        } else {
+            currentPlan = null
+            return generateStandardOutput(task, screen)
+        }
+    }
+
+    private suspend fun generateStandardOutput(task: String, screen: ScreenSnapshot): AgentOutput? {
+        val messages = memory.getMessages().toMutableList()
+        if (learningSystem != null) {
+            messages.addAll(learningSystem.generateImprovedPrompt(task, screen, history))
+        }
+        return generateAgentOutput(messages)
+    }
+
+    private suspend fun handleThinkFailure(screen: ScreenSnapshot) {
+        log("❌ LLM failed to return valid output", "E")
+        loopState.consecutiveFailures++
+        memory.addCorrectionNote(
+            "Your previous output was not valid JSON. Please ensure your response is correctly formatted with 'thought', 'nextGoal', and 'actions' array."
+        )
+
+        if (loopState.consecutiveFailures >= settings.maxRetries) {
+            log("❌ Agent failed too many times consecutively. Stopping.", "E")
+            _state.value = AgentState.Error("Agent failed after ${settings.maxRetries} consecutive failures")
+            if (settings.enableSpeech) speech?.speak("I failed to complete the task after multiple attempts.")
+            
+            history.add(
+                AgentStepHistory(
+                    step = loopState.nSteps,
+                    modelOutput = null,
+                    results = emptyList(),
+                    screenState = screen,
+                    timestamp = System.currentTimeMillis(), // Approximate
+                    durationMs = 0,
+                    failureCount = loopState.consecutiveFailures,
+                    speechLog = emptyList(), // Lost context here, but minor
+                    systemNotes = listOf("Max failures reached")
+                )
+            )
+        } else {
+            if (settings.enableSpeech) speech?.speak("I'm having trouble understanding. Retrying...")
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+
+    /**
+     * PHASE 3: ACT (and RECORD)
+     * Executes actions, records history, learning, and updates plan.
+     * Returns true if the loop should stop (task finished).
+     */
+    private suspend fun act(
+        agentOutput: AgentOutput, 
+        screen: ScreenSnapshot, 
+        stepStartTime: Long, 
+        speechLog: List<String>
+    ): Boolean {
+        log("💪 Executing ${agentOutput.actions.size} action(s)...", "I")
+        val actionResults = mutableListOf<ActionResult>()
+
+        for ((index, action) in agentOutput.actions.withIndex()) {
+            _state.value = AgentState.Acting("${action.javaClass.simpleName} (${index + 1}/${agentOutput.actions.size})")
+            log("Exec: $action", "D")
+            
+            // Execute with Recovery
+            val result = executeActionWithRecovery(action)
+            actionResults.add(result)
+
+            if (result.success) {
+                consecutiveFailures = 0
+            } else {
+                consecutiveFailures++
+            }
+
+            log("  - Action '${action.javaClass.simpleName}': ${if (result.success) "✓" else "✗"} ${result.message}", 
+                if (result.success) "I" else "W")
+
+            // Stop chain if one fails
+            if (!result.success) {
+                log("  - 🛑 Action failed. Stopping current step's execution.", "W")
+                break
+            }
+        }
+
+        loopState.lastResults = actionResults
+
+        // RECORD History
+        val stepDuration = System.currentTimeMillis() - stepStartTime
+        history.add(
+            AgentStepHistory(
+                step = loopState.nSteps,
+                modelOutput = agentOutput,
+                results = actionResults,
+                screenState = screen,
+                timestamp = stepStartTime,
+                durationMs = stepDuration,
+                failureCount = loopState.consecutiveFailures,
+                speechLog = speechLog
+            )
+        )
+
+        // Learn from Success
+        if (actionResults.all { it.success }) {
+            scope.launch {
+                val key = "success_${screen.activityName}_${loopState.nSteps}"
+                val value = "In ${screen.activityName}, I executed actions: ${agentOutput.actions.map { it.javaClass.simpleName }} to achieve '${agentOutput.nextGoal}'"
+                contextualMemory.remember(key, value, MemoryContext(app = screen.activityName))
+            }
+        }
+
+        // Update Plan
+        if (actionResults.all { it.success } && currentPlan != null) {
+            currentPlanStepIndex++
+            if (currentPlanStepIndex >= currentPlan!!.steps.size) {
+                log("🏁 Predictive plan completed.", "I")
+                currentPlan = null
+            }
+        } else if (currentPlan != null) {
+            log("🛑 Plan step failed. Invalidating plan.", "W")
+            currentPlan = null
+        }
+
+        log("⏱️ Step completed in ${stepDuration}ms", "I")
+
+        // Check for Completion
+        if (actionResults.any { it.isDone }) {
+            log("✅ Agent finished the task!", "I")
+            _state.value = AgentState.Finished("Task completed successfully")
+            loopState.stopped = true
+            if (settings.enableSpeech) speech?.speak("Task finished.")
+            return true
+        }
+        
+        return false
+    }
+
     fun getLoopState(): AgentLoopState = loopState.copy()
+    
+    override suspend fun createCheckpoint(): AgentCheckpoint {
+        return AgentCheckpoint(
+            taskId = "current_task", // This would need to be passed in or tracked
+            step = loopState.nSteps,
+            loopState = loopState.copy(),
+            history = history.toList(),
+            memoryMessages = memory.getMessages()
+        )
+    }
+    
+    override suspend fun restoreFromCheckpoint(checkpoint: AgentCheckpoint) {
+        // Restore loop state
+        loopState.nSteps = checkpoint.step
+        loopState.consecutiveFailures = checkpoint.loopState.consecutiveFailures
+        loopState.lastModelOutput = checkpoint.loopState.lastModelOutput
+        loopState.lastResults = checkpoint.loopState.lastResults
+        loopState.planningFailures = checkpoint.loopState.planningFailures
+        
+        // Restore history
+        history.clear()
+        history.addAll(checkpoint.history)
+        
+        // Restore memory messages
+        memory.restoreMessages(checkpoint.memoryMessages)
+    }
+    
+    private suspend fun handleInterruption(interruptionType: InterruptionType) {
+        val context = ExecutionContext(
+            lastAction = loopState.lastModelOutput?.actions?.firstOrNull(),
+            appName = perception.capture().activityName,
+            consecutiveFailures = consecutiveFailures
+        )
+        
+        val checkpoint = createCheckpoint()
+        val strategy = recoverySystem.handleInterruption(interruptionType, context, checkpoint)
+        
+        if (strategy != null) {
+            when (strategy) {
+                is RecoveryStrategy.RestoreFromCheckpoint -> {
+                    restoreFromCheckpoint(strategy.checkpoint)
+                }
+                is RecoveryStrategy.Retry -> {
+                    // For interruptions, we typically just wait and retry
+                    kotlinx.coroutines.delay(strategy.delay)
+                }
+                is RecoveryStrategy.Abandon -> {
+                    // Stop the agent
+                    stop()
+                }
+                else -> {
+                    // Other strategies don't apply to interruptions
+                }
+            }
+        }
+    }
 }

@@ -288,6 +288,7 @@ enum class VolumeStream {
 /**
  * Result of an action execution
  */
+@Serializable
 data class ActionResult(
     val success: Boolean,
     val message: String = "",

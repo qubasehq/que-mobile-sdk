@@ -16,6 +16,7 @@ import com.que.actions.AndroidActionExecutor
 import com.que.platform.android.CosmicOverlayController
 import com.que.core.QueAgent
 import com.que.llm.GeminiClient
+import com.que.core.AgentLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,7 +34,7 @@ import kotlinx.coroutines.runBlocking
  */
 class QueAgentService : Service() {
 
-    private val TAG = "QueAgentService"
+
     
     // Dedicated coroutine scope tied to the service's lifecycle
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -48,18 +49,26 @@ class QueAgentService : Service() {
     private var maxSteps: Int = 30
     private lateinit var speechCoordinator: SpeechCoordinator
     private var guidance: AndroidUserGuidance? = null
+    private lateinit var notificationManager: AgentNotificationManager
+    private var interruptionHandler: com.que.core.InterruptionHandler? = null
 
     companion object {
-        private const val NOTIFICATION_CHANNEL_ID = "QueAgentServiceChannel"
-        private const val NOTIFICATION_ID = 2001
+        private const val TAG = "QueAgentService"
+        private const val ACTION_STOP_SERVICE = "com.que.platform.android.ACTION_STOP_SERVICE"
+        private const val ACTION_PAUSE_SERVICE = "com.que.platform.android.ACTION_PAUSE_SERVICE"
+        private const val ACTION_RESUME_SERVICE = "com.que.platform.android.ACTION_RESUME_SERVICE"
+
         private const val EXTRA_TASK = "com.que.platform.android.EXTRA_TASK"
         private const val EXTRA_API_KEY = "com.que.platform.android.EXTRA_API_KEY"
         private const val EXTRA_MODEL = "com.que.platform.android.EXTRA_MODEL"
         private const val EXTRA_MAX_STEPS = "com.que.platform.android.EXTRA_MAX_STEPS"
-        private const val ACTION_STOP_SERVICE = "com.que.platform.android.ACTION_STOP_SERVICE"
 
         @Volatile
         var isRunning: Boolean = false
+            private set
+
+        @Volatile
+        var isPaused: Boolean = false
             private set
 
         @Volatile
@@ -73,13 +82,12 @@ class QueAgentService : Service() {
          * Start the service with a task
          */
         fun start(context: Context, task: String, apiKey: String, model: String = "gemini-2.5-flash", maxSteps: Int = 30) {
-            Log.d("QueAgentService", "Starting service with task: $task, maxSteps: $maxSteps")
+            AgentLogger.d(TAG, "Starting service with task: $task, maxSteps: $maxSteps")
             // Store key in memory and clear it later. This prevents it from appearing in system dumps blocks.
             sessionApiKey = apiKey
             
             val intent = Intent(context, QueAgentService::class.java).apply {
                 putExtra(EXTRA_TASK, task)
-                // putExtra(EXTRA_API_KEY, apiKey) // REMOVED for security
                 putExtra(EXTRA_MODEL, model)
                 putExtra(EXTRA_MAX_STEPS, maxSteps)
             }
@@ -94,9 +102,31 @@ class QueAgentService : Service() {
          * Stop the service
          */
         fun stop(context: Context) {
-            Log.d("QueAgentService", "External stop request received.")
+            AgentLogger.d(TAG, "External stop request received.")
             val intent = Intent(context, QueAgentService::class.java).apply {
                 action = ACTION_STOP_SERVICE
+            }
+            context.startService(intent)
+        }
+
+        /**
+         * Pause the service
+         */
+        fun pause(context: Context) {
+            AgentLogger.d(TAG, "External pause request received.")
+            val intent = Intent(context, QueAgentService::class.java).apply {
+                action = ACTION_PAUSE_SERVICE
+            }
+            context.startService(intent)
+        }
+
+        /**
+         * Resume the service
+         */
+        fun resume(context: Context) {
+            AgentLogger.d(TAG, "External resume request received.")
+            val intent = Intent(context, QueAgentService::class.java).apply {
+                action = ACTION_RESUME_SERVICE
             }
             context.startService(intent)
         }
@@ -106,22 +136,46 @@ class QueAgentService : Service() {
         super.onCreate()
         Log.d(TAG, "onCreate: Service is being created.")
         
-        // Create notification channel
-        createNotificationChannel()
+        // Initialize notification manager
+        notificationManager = AgentNotificationManager(this)
         
         // Initialize speech coordinator
         speechCoordinator = SpeechCoordinator.getInstance(this)
         Log.d(TAG, "✓ Speech coordinator initialized")
+        
+        // Initialize interruption handler
+        interruptionHandler = com.que.core.InterruptionHandler()
+        Log.d(TAG, "✓ Interruption handler initialized")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand received.")
 
-        // Handle stop action
-        if (intent?.action == ACTION_STOP_SERVICE) {
-            Log.i(TAG, "Received stop action. Stopping service.")
-            stopSelf()
-            return START_NOT_STICKY
+        // Handle service actions
+        when (intent?.action) {
+            ACTION_STOP_SERVICE -> {
+                Log.i(TAG, "Received stop action. Stopping service.")
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_PAUSE_SERVICE -> {
+                Log.i(TAG, "Received pause action.")
+                isPaused = true
+                if (::agent.isInitialized) {
+                    agent.pause()
+                }
+                notificationManager.updateStatus("Paused")
+                return START_STICKY
+            }
+            ACTION_RESUME_SERVICE -> {
+                Log.i(TAG, "Received resume action.")
+                isPaused = false
+                if (::agent.isInitialized) {
+                    agent.resume()
+                }
+                notificationManager.updateStatus("Resumed")
+                return START_STICKY
+            }
         }
 
         // Extract configuration
@@ -131,12 +185,13 @@ class QueAgentService : Service() {
         val maxStepsFromIntent = intent?.getIntExtra(EXTRA_MAX_STEPS, 30)
 
         if (task == null || apiKeyFromIntent == null) {
-            Log.e(TAG, "Missing task or API Key (expired session?)")
+            AgentLogger.e(TAG, "Missing task or API Key (expired session?)")
             stopSelf()
             return START_NOT_STICKY
         }
         
         this.apiKey = apiKeyFromIntent
+        sessionApiKey = null // Clear static reference immediately for security
         this.model = model
         this.maxSteps = maxStepsFromIntent ?: 30
 
@@ -168,8 +223,7 @@ class QueAgentService : Service() {
         isRunning = true
 
         Log.i(TAG, "=== STARTING TASK PROCESSING LOOP ===")
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        startForeground(NOTIFICATION_ID, createNotification("Agent is starting..."))
+        startForeground(AgentNotificationManager.NOTIFICATION_ID, notificationManager.buildForegroundNotification("Agent is starting..."))
 
         // Initialize agent if not already done
         if (!::agent.isInitialized) {
@@ -193,19 +247,34 @@ class QueAgentService : Service() {
             Log.i(TAG, "Task: $task")
             
             // Update notification for the new task
-            notificationManager.notify(NOTIFICATION_ID, createNotification("Running: $task"))
+            // Update notification for the new task
+            notificationManager.updateStatus("Running: $task")
             CosmicOverlayService.addLog("[TASK] Starting: $task")
 
             try {
                 Log.d(TAG, "Calling agent.run()...")
                 speechCoordinator.speakToUser("Starting task")
-                agent.run(task)
-                Log.i(TAG, "✅ Task completed successfully: $task")
-                CosmicOverlayService.addLog("[SUCCESS] Task completed: $task")
+                val finalState = agent.run(task)
+                
+                when (finalState) {
+                    is com.que.core.AgentState.Finished -> {
+                        Log.i(TAG, "✅ Task completed successfully: $task")
+                        CosmicOverlayService.addLog("[SUCCESS] Task completed: $task")
+                        notificationManager.updateStatus("Task Completed")
+                    }
+                    is com.que.core.AgentState.Error -> {
+                        Log.e(TAG, "❌ Task failed: ${finalState.message}", finalState.cause)
+                        CosmicOverlayService.addLog("[ERROR] Task failed: ${finalState.message}")
+                        notificationManager.updateStatus("Task Failed")
+                    }
+                    else -> {
+                         Log.w(TAG, "⚠️ Task ended in unexpected state: $finalState")
+                    }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Task failed with exception: $task", e)
                 CosmicOverlayService.addLog("[ERROR] Task failed: ${e.message}")
-            }
+             }
         }
 
         Log.i(TAG, "=== TASK QUEUE EMPTY, STOPPING SERVICE ===")
@@ -247,8 +316,10 @@ class QueAgentService : Service() {
         val appLauncher = AppLauncher(this)
         Log.d(TAG, "✓ App launcher created")
         
-        val executor = AndroidActionExecutor(gestureController, intentRegistry, fileSystem, this, appLauncher)
-        Log.d(TAG, "✓ Action executor created with launcher")
+        val eventMonitor = AndroidEventMonitor()
+        
+        val executor = AndroidActionExecutor(gestureController, intentRegistry, fileSystem, this, appLauncher, eventMonitor)
+        Log.d(TAG, "✓ Action executor created with launcher and event monitor")
         
         val llm = GeminiClient(apiKey, model)
         Log.d(TAG, "✓ LLM client created")
@@ -272,9 +343,27 @@ class QueAgentService : Service() {
         Log.d(TAG, "✓ QueAgent instance created")
         
         // Forward agent state to overlay service
+        // Forward agent state to overlay service
         serviceScope.launch {
             // Show cosmic overlay when service starts
-            QueAccessibilityService.instance?.showCosmicOverlay()
+            val accessibilityService = com.que.core.ServiceManager.getService<QueAccessibilityService>()
+            if (accessibilityService != null) {
+                accessibilityService.showCosmicOverlay()
+                Log.d(TAG, "✓ Cosmic overlay shown via accessibility service")
+            } else {
+                // Fallback: Start cosmic overlay service directly
+                try {
+                    val overlayIntent = Intent(this@QueAgentService, CosmicOverlayService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(overlayIntent)
+                    } else {
+                        startService(overlayIntent)
+                    }
+                    Log.d(TAG, "✓ Started CosmicOverlayService directly as fallback")
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Failed to start cosmic overlay", e)
+                }
+            }
             
             agent.state.collect { state ->
                 Log.d(TAG, "Agent state changed: $state")
@@ -289,18 +378,24 @@ class QueAgentService : Service() {
                     is com.que.core.AgentState.Error -> CosmicOverlayController.AgentVisualState.ERROR
                     else -> CosmicOverlayController.AgentVisualState.IDLE
                 }
-                QueAccessibilityService.instance?.setCosmicState(visualState)
+                
+                if (accessibilityService != null) {
+                    accessibilityService.setCosmicState(visualState)
+                }
                 
                 // Log state changes
                 when (state) {
                     is com.que.core.AgentState.Perceiving -> {
                         CosmicOverlayService.addLog("[PERCEIVING] Analyzing screen...")
+                        notificationManager.updateStatus("Analizing screen...")
                     }
                     is com.que.core.AgentState.Thinking -> {
                         CosmicOverlayService.addLog("[THINKING] Processing with LLM...")
+                        notificationManager.updateStatus("Thinking...")
                     }
                     is com.que.core.AgentState.Acting -> {
                         CosmicOverlayService.addLog("[ACTING] ${state.actionDescription}")
+                        notificationManager.updateStatus("Acting: ${state.actionDescription.take(20)}...")
                     }
                     is com.que.core.AgentState.Finished -> {
                         CosmicOverlayService.addLog("[FINISHED] ${state.result}")
@@ -315,6 +410,8 @@ class QueAgentService : Service() {
             }
         }
         
+
+        
         Log.d(TAG, "=== AGENT INITIALIZATION COMPLETE ===")
     }
 
@@ -328,7 +425,19 @@ class QueAgentService : Service() {
         }
 
         // Hide system-wide overlay
-        QueAccessibilityService.instance?.hideCosmicOverlay()
+        val accessibilityService = com.que.core.ServiceManager.getService<QueAccessibilityService>()
+        if (accessibilityService != null) {
+            accessibilityService.hideCosmicOverlay()
+        } else {
+            // Fallback: Stop cosmic overlay service directly
+            try {
+                val overlayIntent = Intent(this, CosmicOverlayService::class.java)
+                stopService(overlayIntent)
+                Log.d(TAG, "✓ Stopped CosmicOverlayService directly as fallback")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Failed to stop cosmic overlay service", e)
+            }
+        }
         
         // Shutdown speech
         if (::speechCoordinator.isInitialized) {
@@ -352,42 +461,6 @@ class QueAgentService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val serviceChannel = NotificationChannel(
-                NOTIFICATION_CHANNEL_ID,
-                "Que Agent Service",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(serviceChannel)
-        }
-    }
-
-    private fun createNotification(contentText: String): Notification {
-        val stopIntent = Intent(this, QueAgentService::class.java).apply {
-            action = ACTION_STOP_SERVICE
-        }
-        val stopPendingIntent = PendingIntent.getService(
-            this,
-            0,
-            stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("Que Agent Running")
-            .setContentText(contentText)
-            .addAction(
-                android.R.drawable.ic_media_pause,
-                "Stop",
-                stopPendingIntent
-            )
-            .setOngoing(true)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-    }
 
     /**
      * Wraps SpeechCoordinator to implement SpeechService interface
@@ -428,7 +501,7 @@ class QueAgentService : Service() {
         
         private suspend fun waitForService(): QueAccessibilityService {
             repeat(20) { // 10 second timeout
-                QueAccessibilityService.instance?.takeIf { it.isConnected }?.let {
+                com.que.core.ServiceManager.getService<QueAccessibilityService>()?.takeIf { it.isConnected }?.let {
                     serviceRef = WeakReference(it)
                     return it
                 }
