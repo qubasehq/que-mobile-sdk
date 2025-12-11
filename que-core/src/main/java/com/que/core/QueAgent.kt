@@ -56,6 +56,7 @@ class QueAgent(
 
     private val TAG = "QueAgent"
     private val interruptionDetector = InterruptionDetector(context)
+    private val interruptionHandler = InterruptionHandler()
 
     fun dispose() {
         scope.cancel()
@@ -224,9 +225,17 @@ class QueAgent(
             guidance?.showProgress(loopState.nSteps, settings.maxSteps, "Starting step ${loopState.nSteps}")
 
             // 1. CHECK FOR INTERRUPTIONS
+            log(" Checking for interruptions...", "D")
             val interruption = interruptionDetector.detectInterruption()
             if (interruption != null) {
-                handleInterruption(interruption)
+                log(" INTERRUPTION DETECTED: $interruption", "W")
+                val shouldContinue = handleInterruption(interruption)
+                if (!shouldContinue) {
+                    log(" Interruption requires stopping execution", "W")
+                    break
+                }
+            } else {
+                log(" No interruption detected", "D")
             }
             
             // 2. SENSE
@@ -744,33 +753,45 @@ class QueAgent(
         memory.restoreMessages(checkpoint.memoryMessages)
     }
     
-    private suspend fun handleInterruption(interruptionType: InterruptionType) {
-        val context = ExecutionContext(
-            lastAction = loopState.lastModelOutput?.actions?.firstOrNull(),
-            appName = perception.capture().activityName,
-            consecutiveFailures = consecutiveFailures
+    private suspend fun handleInterruption(interruptionType: InterruptionType): Boolean {
+        val context = InterruptionContext(
+            systemEvent = "Detected interruption: $interruptionType",
+            permission = if (interruptionType == InterruptionType.PERMISSION_REVOKED) "accessibility" else null
         )
         
-        val checkpoint = createCheckpoint()
-        val strategy = recoverySystem.handleInterruption(interruptionType, context, checkpoint)
+        val response = interruptionHandler.handleInterruption(interruptionType, this, context)
         
-        if (strategy != null) {
-            when (strategy) {
-                is RecoveryStrategy.RestoreFromCheckpoint -> {
-                    restoreFromCheckpoint(strategy.checkpoint)
+        // Handle the response based on the action
+        when (response.action) {
+            InterruptionAction.WAIT_FOR_RESUME -> {
+                // Agent is already paused, wait for resume
+                waitForResume()
+            }
+            InterruptionAction.WAIT_FOR_UNLOCK -> {
+                // Wait for device to be unlocked
+                while (interruptionDetector.isDeviceLocked()) {
+                    kotlinx.coroutines.delay(1000)
                 }
-                is RecoveryStrategy.Retry -> {
-                    // For interruptions, we typically just wait and retry
-                    kotlinx.coroutines.delay(strategy.delay)
-                }
-                is RecoveryStrategy.Abandon -> {
-                    // Stop the agent
-                    stop()
-                }
-                else -> {
-                    // Other strategies don't apply to interruptions
-                }
+                resume()
+            }
+            InterruptionAction.REQUEST_PERMISSIONS -> {
+                // Stop execution and request permissions
+                stop()
+                _state.value = AgentState.Error("Permissions revoked", RuntimeException("Required permissions not granted"))
+                return false // Don't continue
+            }
+            InterruptionAction.STOP_EXECUTION -> {
+                // Stop execution
+                stop()
+                return false // Don't continue
+            }
+            InterruptionAction.CONTINUE_EXECUTION -> {
+                // Continue execution
+                // Nothing to do here
             }
         }
+        
+        // Return whether we should continue based on the response
+        return response.shouldContinue
     }
 }

@@ -126,8 +126,8 @@ class AndroidActionExecutor(
         val centerX = element.bounds.left + (element.bounds.right - element.bounds.left) / 2
         val centerY = element.bounds.top + (element.bounds.bottom - element.bounds.top) / 2
         
-        val path = android.graphics.Path().apply { moveTo(centerX.toFloat(), centerY.toFloat()) }
-        val success = controller.dispatchGesture(path, 1000L) // 1000ms for long press
+        // Use the controller's dedicated longPress method for better reliability
+        val success = controller.longPress(centerX, centerY, 1000L) // 1000ms for long press
         
         return ActionResult(success, "Long pressed element $elementId")
     }
