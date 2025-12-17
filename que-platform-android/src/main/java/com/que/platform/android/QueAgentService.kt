@@ -47,6 +47,7 @@ class QueAgentService : Service() {
     private lateinit var apiKey: String
     private lateinit var model: String
     private var maxSteps: Int = 30
+    private var enablePredictivePlanning: Boolean = false
     private lateinit var speechCoordinator: SpeechCoordinator
     private var guidance: AndroidUserGuidance? = null
     private lateinit var notificationManager: AgentNotificationManager
@@ -62,6 +63,7 @@ class QueAgentService : Service() {
         private const val EXTRA_API_KEY = "com.que.platform.android.EXTRA_API_KEY"
         private const val EXTRA_MODEL = "com.que.platform.android.EXTRA_MODEL"
         private const val EXTRA_MAX_STEPS = "com.que.platform.android.EXTRA_MAX_STEPS"
+        private const val EXTRA_ENABLE_PREDICTIVE_PLANNING = "com.que.platform.android.EXTRA_ENABLE_PREDICTIVE_PLANNING"
 
         @Volatile
         var isRunning: Boolean = false
@@ -81,7 +83,7 @@ class QueAgentService : Service() {
         /**
          * Start the service with a task
          */
-        fun start(context: Context, task: String, apiKey: String, model: String = "gemini-2.5-flash", maxSteps: Int = 30) {
+        fun start(context: Context, task: String, apiKey: String, model: String = "gemini-2.5-flash", maxSteps: Int = 30, enablePredictivePlanning: Boolean = false) {
             AgentLogger.d(TAG, "Starting service with task: $task, maxSteps: $maxSteps")
             // Store key in memory and clear it later. This prevents it from appearing in system dumps blocks.
             sessionApiKey = apiKey
@@ -90,6 +92,7 @@ class QueAgentService : Service() {
                 putExtra(EXTRA_TASK, task)
                 putExtra(EXTRA_MODEL, model)
                 putExtra(EXTRA_MAX_STEPS, maxSteps)
+                putExtra(EXTRA_ENABLE_PREDICTIVE_PLANNING, enablePredictivePlanning)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -183,6 +186,7 @@ class QueAgentService : Service() {
         val apiKeyFromIntent = sessionApiKey // Retrieve from memory
         val model = intent?.getStringExtra(EXTRA_MODEL) ?: "gemini-2.5-flash"
         val maxStepsFromIntent = intent?.getIntExtra(EXTRA_MAX_STEPS, 30)
+        val enablePredictivePlanningFromIntent = intent?.getBooleanExtra(EXTRA_ENABLE_PREDICTIVE_PLANNING, false) ?: false
 
         if (task == null || apiKeyFromIntent == null) {
             AgentLogger.e(TAG, "Missing task or API Key (expired session?)")
@@ -194,11 +198,16 @@ class QueAgentService : Service() {
         sessionApiKey = null // Clear static reference immediately for security
         this.model = model
         this.maxSteps = maxStepsFromIntent ?: 30
+        this.enablePredictivePlanning = enablePredictivePlanningFromIntent
 
-        // Add new task to the queue
+        // Add new task to the queue (Deduplicate)
         if (task.isNotBlank()) {
-            Log.d(TAG, "Adding task to queue: $task")
-            taskQueue.add(task)
+            if (task == currentTask || taskQueue.contains(task)) {
+                 Log.d(TAG, "Task matches current or queued task. Ignoring duplicate: $task")
+            } else {
+                 Log.d(TAG, "Adding task to queue: $task")
+                 taskQueue.add(task)
+            }
         }
 
         // If the agent is not already processing tasks, start the loop
@@ -225,11 +234,40 @@ class QueAgentService : Service() {
         Log.i(TAG, "=== STARTING TASK PROCESSING LOOP ===")
         startForeground(AgentNotificationManager.NOTIFICATION_ID, notificationManager.buildForegroundNotification("Agent is starting..."))
 
+            // Forward agent state to overlay service - START IT IMMEDIATELY
+            serviceScope.launch {
+                // ALWAYS Start cosmic overlay service for visual feedback (logs/status)
+                try {
+                    val overlayIntent = Intent(this@QueAgentService, CosmicOverlayService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(overlayIntent)
+                    } else {
+                        startService(overlayIntent)
+                    }
+                    Log.d(TAG, "✓ Started CosmicOverlayService for feedback")
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Failed to start cosmic overlay", e)
+                }
+
+                val accessibilityService = com.que.core.ServiceManager.getService<QueAccessibilityService>()
+                // Also trigger particle effects if available (for fun)
+                if (accessibilityService != null) {
+                    accessibilityService.showCosmicOverlay()
+                }
+                
+                // Show initial status
+                CosmicOverlayService.addLog("[SYSTEM] Starting Agent...")
+                CosmicOverlayService.updateState(com.que.core.AgentState.Thinking())
+            }
+
+
         // Initialize agent if not already done
         if (!::agent.isInitialized) {
             try {
                 Log.d(TAG, "Agent not initialized, initializing now...")
+                CosmicOverlayService.addLog("[SYSTEM] Initializing AI Brain...")
                 initializeAgent()
+                attachStateMonitoring()
                 Log.i(TAG, "✅ Agent initialized successfully")
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Failed to initialize agent", e)
@@ -290,14 +328,14 @@ class QueAgentService : Service() {
         // Create settings
         val settings = com.que.core.AgentSettings(
             maxSteps = maxSteps,
-            maxRetries = 3,
-            maxFailures = 3,
+            maxRetries = 5,
+            maxFailures = 5,
             enableLogging = true,
             model = model,
             includeScreenshots = true,
             retryFailedActions = true,
             enableAdaptiveLearning = true,
-            enablePredictivePlanning = true
+            enablePredictivePlanning = this.enablePredictivePlanning
         )
         Log.d(TAG, "✓ Agent settings created")
         
@@ -344,34 +382,20 @@ class QueAgentService : Service() {
         
         // Forward agent state to overlay service
         // Forward agent state to overlay service
+        Log.d(TAG, "=== AGENT INITIALIZATION COMPLETE ===")
+    }
+
+    private fun attachStateMonitoring() {
+        if (!::agent.isInitialized) return
+        
         serviceScope.launch {
-            // Show cosmic overlay when service starts
-            val accessibilityService = com.que.core.ServiceManager.getService<QueAccessibilityService>()
-            if (accessibilityService != null) {
-                accessibilityService.showCosmicOverlay()
-                Log.d(TAG, "✓ Cosmic overlay shown via accessibility service")
-            } else {
-                // Fallback: Start cosmic overlay service directly
-                try {
-                    val overlayIntent = Intent(this@QueAgentService, CosmicOverlayService::class.java)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(overlayIntent)
-                    } else {
-                        startService(overlayIntent)
-                    }
-                    Log.d(TAG, "✓ Started CosmicOverlayService directly as fallback")
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Failed to start cosmic overlay", e)
-                }
-            }
-            
             agent.state.collect { state ->
                 Log.d(TAG, "Agent state changed: $state")
                 CosmicOverlayService.updateState(state)
                 
                 // Update system-wide cosmic overlay
                 val visualState = when (state) {
-                    is com.que.core.AgentState.Perceiving -> CosmicOverlayController.AgentVisualState.IDLE // Pulse while looking
+                    is com.que.core.AgentState.Perceiving -> CosmicOverlayController.AgentVisualState.IDLE
                     is com.que.core.AgentState.Thinking -> CosmicOverlayController.AgentVisualState.THINKING
                     is com.que.core.AgentState.Acting -> CosmicOverlayController.AgentVisualState.ACTING
                     is com.que.core.AgentState.Finished -> CosmicOverlayController.AgentVisualState.SUCCESS
@@ -379,6 +403,7 @@ class QueAgentService : Service() {
                     else -> CosmicOverlayController.AgentVisualState.IDLE
                 }
                 
+                val accessibilityService = com.que.core.ServiceManager.getService<QueAccessibilityService>()
                 if (accessibilityService != null) {
                     accessibilityService.setCosmicState(visualState)
                 }
@@ -387,7 +412,7 @@ class QueAgentService : Service() {
                 when (state) {
                     is com.que.core.AgentState.Perceiving -> {
                         CosmicOverlayService.addLog("[PERCEIVING] Analyzing screen...")
-                        notificationManager.updateStatus("Analizing screen...")
+                        notificationManager.updateStatus("Analyzing screen...")
                     }
                     is com.que.core.AgentState.Thinking -> {
                         CosmicOverlayService.addLog("[THINKING] Processing with LLM...")
@@ -399,8 +424,6 @@ class QueAgentService : Service() {
                     }
                     is com.que.core.AgentState.Finished -> {
                         CosmicOverlayService.addLog("[FINISHED] ${state.result}")
-                        // Hide overlay after a delay if finished? 
-                        // For now keep it to show success state
                     }
                     is com.que.core.AgentState.Error -> {
                         CosmicOverlayService.addLog("[ERROR] ${state.message}")
@@ -409,12 +432,8 @@ class QueAgentService : Service() {
                 }
             }
         }
-        
-
-        
-        Log.d(TAG, "=== AGENT INITIALIZATION COMPLETE ===")
     }
-
+    
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "onDestroy: Service is being destroyed.")

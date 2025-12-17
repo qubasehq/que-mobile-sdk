@@ -35,4 +35,5 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
+    implementation("ai.picovoice:porcupine-android:4.0.0")
 }

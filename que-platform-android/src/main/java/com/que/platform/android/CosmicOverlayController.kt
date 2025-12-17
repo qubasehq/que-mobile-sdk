@@ -22,6 +22,12 @@ class CosmicOverlayController(private val context: Context) {
 
     fun show() {
         if (isShowing) return
+        
+        if (!PermissionManager.hasOverlayPermission(context)) {
+            android.util.Log.e("CosmicOverlay", "Attempted to show overlay without permission")
+            return
+        }
+
         isShowing = true
         
         val params = WindowManager.LayoutParams(

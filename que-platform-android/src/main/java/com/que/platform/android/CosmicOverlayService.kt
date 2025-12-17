@@ -114,15 +114,15 @@ class CosmicOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         )
 
-        params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        params.y = 0
+        params.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        params.y = 50 // Slight offset from bottom edge
 
         // Create overlay layout
         overlayView = createOverlayLayout()
         
         try {
             windowManager?.addView(overlayView, params)
-            Log.d(TAG, "Overlay added to window")
+            Log.d(TAG, "Overlay added to window at BOTTOM")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add overlay", e)
         }
@@ -134,64 +134,69 @@ class CosmicOverlayService : Service() {
         val layout = android.widget.FrameLayout(this).apply {
             layoutParams = android.view.ViewGroup.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                400
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
             )
-            setBackgroundColor(android.graphics.Color.parseColor("#CC000000"))
-            setPadding(16, 16, 16, 16)
+            // Transparent background, maybe a slight gradient if needed, but user wants simple
+            setBackgroundColor(android.graphics.Color.TRANSPARENT) 
+            setPadding(0, 0, 0, 0)
         }
 
-        // Add cosmic wave
+        // Add cosmic wave - MAKE IT SMALL AT BOTTOM
         cosmicWave = CosmicWaveView(this).apply {
             layoutParams = android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                150 // Height in pixels for the wave strip
             )
-            alpha = 0.6f
+            (layoutParams as android.widget.FrameLayout.LayoutParams).gravity = Gravity.BOTTOM
+            alpha = 0.8f
         }
         layout.addView(cosmicWave)
 
-        // Add content container
+        // Content Container (Text)
         val contentLayout = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             layoutParams = android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
             )
-            setPadding(24, 24, 24, 24)
+            // Align to bottom, but above the wave slightly if needed, or just container logic
+            (layoutParams as android.widget.FrameLayout.LayoutParams).gravity = Gravity.BOTTOM
+            setPadding(24, 24, 24, 160) // Bottom padding to clear the 150px wave a bit or overlap nicely
+            
+            // Semi-transparent background for text readablity
+            setBackgroundColor(android.graphics.Color.parseColor("#80000000"))
         }
 
-        // Title
+        // Title (Small)
         val title = TextView(this).apply {
-            text = "🌌 QUE Agent"
-            textSize = 20f
+            text = "QUE"
+            textSize = 14f
             setTextColor(android.graphics.Color.WHITE)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, 16)
         }
         contentLayout.addView(title)
 
-        // Status
+        // Status (Prominent)
         statusText = TextView(this).apply {
             text = "Idle"
             textSize = 16f
             setTextColor(android.graphics.Color.parseColor("#00FF88"))
-            setPadding(0, 0, 0, 16)
+            setPadding(0, 4, 0, 4)
         }
         contentLayout.addView(statusText)
 
-        // Logs
+        // Logs (Limited Height)
         val logsContainer = android.widget.ScrollView(this).apply {
             layoutParams = android.widget.LinearLayout.LayoutParams(
                 android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
+                200 // Max height for logs (pixels) - keeps it small
             )
         }
         
         logsText = TextView(this).apply {
-            text = "Waiting for agent...\n"
+            text = "..."
             textSize = 12f
-            setTextColor(android.graphics.Color.parseColor("#00FF88"))
+            setTextColor(android.graphics.Color.LTGRAY)
             typeface = android.graphics.Typeface.MONOSPACE
         }
         logsContainer.addView(logsText)
@@ -204,36 +209,42 @@ class CosmicOverlayService : Service() {
     private fun updateOverlayForState(state: AgentState) {
         when (state) {
             is AgentState.Idle -> {
-                statusText?.text = "💤 Idle"
+                statusText?.text = "Idle"
                 cosmicWave?.setIntensity(0.2f)
             }
             is AgentState.Perceiving -> {
-                statusText?.text = "👁️ Perceiving..."
+                statusText?.text = "Perceiving..."
                 cosmicWave?.setIntensity(0.5f)
             }
             is AgentState.Thinking -> {
-                statusText?.text = "🧠 Thinking..."
+                statusText?.text = "Thinking..."
                 cosmicWave?.setIntensity(0.8f)
             }
             is AgentState.Acting -> {
-                statusText?.text = "⚡ ${state.actionDescription}"
+                statusText?.text = "${state.actionDescription}"
                 cosmicWave?.setIntensity(1.0f)
             }
             is AgentState.Finished -> {
-                statusText?.text = "✅ ${state.result}"
+                statusText?.text = "${state.result}"
                 cosmicWave?.setIntensity(0.3f)
             }
             is AgentState.Error -> {
-                statusText?.text = "❌ ${state.message}"
+                statusText?.text = "${state.message}"
                 cosmicWave?.setIntensity(0.1f)
             }
         }
     }
 
     private fun appendLog(message: String) {
-        val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-            .format(java.util.Date())
-        logsText?.append("[$timestamp] $message\n")
+        scope.launch(Dispatchers.Main) {
+            val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                .format(java.util.Date())
+            logsText?.append("[$timestamp] $message\n")
+            
+            // Auto-scroll
+            val parent = logsText?.parent as? android.widget.ScrollView
+            parent?.fullScroll(android.view.View.FOCUS_DOWN)
+        }
     }
 
     override fun onDestroy() {

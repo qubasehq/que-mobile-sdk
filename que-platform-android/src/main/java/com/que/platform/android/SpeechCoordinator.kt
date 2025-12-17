@@ -5,6 +5,9 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import java.util.Locale
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.flow.collect
 
 /**
  * Speech Coordinator for agent voice feedback.
@@ -107,6 +110,34 @@ class SpeechCoordinator private constructor(private val context: Context) {
         return tts?.isSpeaking ?: false
     }
     
+    private val sttManager: STTManager by lazy { STTManager(context) }
+
+    /**
+     * Start listening for user input.
+     */
+    fun startListening(
+        onResult: (String) -> Unit,
+        onError: (String) -> Unit,
+        onPartialResult: (String) -> Unit,
+        onListeningStateChange: (Boolean) -> Unit
+    ) {
+        kotlinx.coroutines.MainScope().launch {
+            try {
+                onListeningStateChange(true)
+                sttManager.startListening()
+                    .collect { result ->
+                        onResult(result)
+                    }
+            } catch (e: Exception) {
+                // If STT fails (Timeout, No Match), we come here
+                onError(e.message ?: "Unknown STT Error")
+            } finally {
+                // ALWAYS reset state
+                onListeningStateChange(false)
+            }
+        }
+    }
+
     /**
      * Shutdown TTS engine.
      */

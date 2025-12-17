@@ -35,7 +35,8 @@ class GeminiClient(
         isLenient = true
     }
 
-    private val circuitBreaker = com.que.core.CircuitBreaker()
+    // Increased threshold for 503 overload spikes
+    private val circuitBreaker = com.que.core.CircuitBreaker(failureThreshold = 10, resetTimeout = 60000)
     private var lastRequestTime = 0L
     private val minRequestIntervalMs = 2000L // Cap at 30 RPM (Safety margin for 60 RPM limit)
 
@@ -83,8 +84,8 @@ class GeminiClient(
     }
 
     private suspend fun <T> retryWithBackoff(
-        maxRetries: Int = 3,
-        initialDelay: Long = 2000,
+        maxRetries: Int = 5,
+        initialDelay: Long = 3000,
         factor: Double = 2.0,
         block: suspend () -> T
     ): T {

@@ -32,10 +32,12 @@ class STTManager(private val context: Context) {
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onError(error: Int) {
-                // close(RuntimeException("Speech recognition error: $error"))
-                // Don't close flow on error, just maybe log or ignore for continuous listening?
-                // For now, let's close to signal stop.
-                close()
+                val errorMessage = when (error) {
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No match"
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Timeout"
+                    else -> "Error $error"
+                }
+                close(RuntimeException(errorMessage)) 
             }
 
             override fun onResults(results: Bundle?) {

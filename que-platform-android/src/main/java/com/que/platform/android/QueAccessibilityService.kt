@@ -44,18 +44,38 @@ class QueAccessibilityService : AccessibilityService(), GestureController {
         appLauncher = AppLauncher(this)
         speechCoordinator = SpeechCoordinator.getInstance(this)
         
+        // Auto-start Voice Service to keep it alive (Assistant Pattern)
+        try {
+            val serviceIntent = Intent(this, QueConversationalService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+            android.util.Log.d("QueAccessibilityService", "Auto-started QueConversationalService")
+        } catch (e: Exception) {
+            android.util.Log.e("QueAccessibilityService", "Failed to auto-start voice service", e)
+        }
+        
         // Health check job
         scope.launch {
             while (isConnected) {
                 kotlinx.coroutines.delay(5000)
                 try {
-                    if (rootInActiveWindow == null) {
-                        // Log but don't immediately disconnect, could be transient
-                        android.util.Log.w("QueAccessibilityService", "Root node unavailable - service may be disconnecting or locked")
+                    val root = rootInActiveWindow
+                    if (root == null) {
+                        // Root node can be null if the screen is off, locked, or protected content is shown.
+                        // This is NOT necessarily a service failure.
+                        android.util.Log.v("QueAccessibilityService", "Root node unavailable (Transient state)")
+                    } else {
+                        // Service is healthy and can see content
+                        // android.util.Log.v("QueAccessibilityService", "Health check passed")
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("QueAccessibilityService", "Health check failed", e)
-                    isConnected = false
+                    android.util.Log.e("QueAccessibilityService", "Health check exeption", e)
+                    // Do NOT set isConnected = false here unless we want to kill the service.
+                    // AccessibilityService lifecycle is managed by the system.
+                    // If we get an exception, we might just want to wait and retry.
                 }
             }
         }

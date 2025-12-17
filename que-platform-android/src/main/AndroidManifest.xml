@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <application>
@@ -28,13 +29,25 @@
         <service
             android:name=".CosmicOverlayService"
             android:enabled="true"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
             
         <service
             android:name=".QueAgentService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="specialUse" />
+            
+        <service
+            android:name=".FloatingQueButtonService"
+            android:enabled="true"
+            android:exported="false" />
+            
+        <service
+            android:name=".QueConversationalService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
     </application>
 
 </manifest>
