@@ -1,15 +1,20 @@
 package com.que.actions
+import com.que.core.registry.ElementRegistry
+import com.que.core.registry.IntentRegistry
+import com.que.core.service.Action
+import com.que.core.service.ActionExecutor
+import com.que.core.service.ActionResult
+import com.que.core.service.AppLauncher
+import com.que.core.service.Direction
+import com.que.core.service.EventMonitor
+import com.que.core.service.FileSystem
+import com.que.core.service.VolumeStream
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.util.Log
-import com.que.core.Action
-import com.que.core.ActionExecutor
-import com.que.core.ActionResult
-import com.que.core.Direction
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
-import com.que.core.ElementRegistry
 import kotlinx.coroutines.delay
 
 /**
@@ -18,11 +23,11 @@ import kotlinx.coroutines.delay
  */
 class AndroidActionExecutor(
     private val controller: GestureController,
-    private val intentRegistry: com.que.core.IntentRegistry,
-    private val fileSystem: com.que.core.FileSystem,
+    private val intentRegistry: IntentRegistry,
+    private val fileSystem: FileSystem,
     private val context: Context,
-    private val appLauncher: com.que.core.AppLauncher? = null,
-    private val eventMonitor: com.que.core.EventMonitor? = null
+    private val appLauncher: AppLauncher? = null,
+    private val eventMonitor: EventMonitor? = null
 ) : ActionExecutor {
 
     private val displayMetrics = context.resources.displayMetrics
@@ -109,7 +114,7 @@ class AndroidActionExecutor(
     }
 
     private suspend fun tap(elementId: Int): ActionResult {
-        val element = com.que.core.ElementRegistry.get(elementId)
+        val element = ElementRegistry.get(elementId)
             ?: return ActionResult(false, "Element with ID $elementId not found on screen.")
             
         val centerX = element.bounds.left + (element.bounds.right - element.bounds.left) / 2
@@ -120,7 +125,7 @@ class AndroidActionExecutor(
     }
 
     private suspend fun longPress(elementId: Int): ActionResult {
-        val element = com.que.core.ElementRegistry.get(elementId)
+        val element = ElementRegistry.get(elementId)
             ?: return ActionResult(false, "Element with ID $elementId not found on screen.")
 
         val centerX = element.bounds.left + (element.bounds.right - element.bounds.left) / 2
@@ -216,34 +221,14 @@ class AndroidActionExecutor(
         
         return when (direction) {
             Direction.DOWN -> {
-                // Scroll DOWN means content moves UP, so swipe UP (bottom -> top)
-                // Blurr's scrollDown: swipe from 20% to (20% + pixels) -> This moves content DOWN?
-                // Wait, "Scroll Down" usually means "Show content below", which requires swiping UP.
-                // Let's check Blurr's implementation again.
-                // Blurr scrollDown: swipe(x, y1, x, y2) where y1=20%, y2=20%+pixels. 
-                // Swipe TOP to BOTTOM. This moves content DOWN (showing content above).
-                // So "Scroll Down" = "Swipe Down" = "Show content above".
-                // "Scroll Up" = "Swipe Up" = "Show content below".
-                
-                // Let's follow standard convention:
-                // Scroll DOWN = Move view towards bottom = Swipe UP
-                // Scroll UP = Move view towards top = Swipe DOWN
-                
-                // Actually, let's stick to Blurr's naming if we want parity.
-                // Blurr: scrollDown -> swipe(top, bottom) -> moves content DOWN.
-                // Blurr: scrollUp -> swipe(bottom, top) -> moves content UP.
-                
-                // Let's implement "Scroll Down" as "Swipe Up" (Standard Android behavior to see content below)
-                // If Blurr does the opposite, it might be confusing. 
-                // Let's assume "Scroll Down" means "I want to see what is below".
-                
+                // Scroll DOWN means "I want to see what is below" -> Swipe UP (bottom -> top)
                 val startY = (screenHeight * 0.8).toInt()
                 val endY = (startY - pixels).coerceAtLeast(0)
                 val success = controller.scroll(x, startY, x, endY, duration)
                 ActionResult(success, "Scrolled DOWN (swiped up) by $pixels px")
             }
             Direction.UP -> {
-                // Scroll UP means "I want to see what is above" -> Swipe DOWN
+                // Scroll UP means "I want to see what is above" -> Swipe DOWN (top -> bottom)
                 val startY = (screenHeight * 0.2).toInt()
                 val endY = (startY + pixels).coerceAtMost(screenHeight)
                 val success = controller.scroll(x, startY, x, endY, duration)
@@ -339,7 +324,7 @@ class AndroidActionExecutor(
          return swipe(startX, startY, endX, endY, duration)
     }
 
-    private suspend fun scrollToElement(elementId: Int, maxScrolls: Int, direction: com.que.core.Direction): ActionResult {
+    private suspend fun scrollToElement(elementId: Int, maxScrolls: Int, direction: Direction): ActionResult {
         Log.d("AndroidActionExecutor", "ScrollToElement requested: id=$elementId, max=$maxScrolls, dir=$direction")
         return ActionResult(false, "ScrollToElement requires perception loop support (not yet implemented)")
     }
@@ -352,7 +337,7 @@ class AndroidActionExecutor(
         return ActionResult(success, "Scrolled to position")
     }
     
-    private suspend fun fling(direction: com.que.core.Direction, velocity: Float): ActionResult {
+    private suspend fun fling(direction: Direction, velocity: Float): ActionResult {
         Log.d("AndroidActionExecutor", "Fling requested: dir=$direction, velocity=$velocity")
         val duration = 100L // Fast swipe
         val pixels = 1500
@@ -371,9 +356,11 @@ class AndroidActionExecutor(
     }
 
     private suspend fun selectAll(): ActionResult {
-        val success = controller.performGlobal(AccessibilityService.GLOBAL_ACTION_HOME)
-        if (!success) Log.d("AndroidActionExecutor", "SelectAll fallback failed")
-        return ActionResult(false, "SelectAll not supported globally")
+        // AccessibilityService does not have a GLOBAL_ACTION_SELECT_ALL.
+        // This is typically handled by Type/Replace actions focusing the field.
+        // Mocking as not supported for now to avoid the previous HOME bug.
+        Log.d("AndroidActionExecutor", "SelectAll requested but not supported globally")
+        return ActionResult(false, "SelectAll not supported globally. Focused field selection is handled by the app.")
     }
 
     private suspend fun copy(): ActionResult {
@@ -411,7 +398,7 @@ class AndroidActionExecutor(
         return performGlobal(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS, "Notifications")
     }
 
-    private suspend fun setVolume(stream: com.que.core.VolumeStream, level: Int): ActionResult {
+    private suspend fun setVolume(stream: VolumeStream, level: Int): ActionResult {
         Log.d("AndroidActionExecutor", "SetVolume requested: $stream to $level")
         return ActionResult(false, "SetVolume not implemented")
     }

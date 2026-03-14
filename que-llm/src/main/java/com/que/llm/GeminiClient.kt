@@ -1,9 +1,10 @@
 package com.que.llm
+import com.que.core.internal.CircuitBreaker
+import com.que.core.service.LLMClient
+import com.que.core.service.LLMResponse
+import com.que.core.service.Message
+import com.que.core.service.Role
 
-import com.que.core.LLMClient
-import com.que.core.LLMResponse
-import com.que.core.Message
-import com.que.core.Role
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -21,7 +22,7 @@ import java.util.concurrent.TimeUnit
 
 class GeminiClient(
     private val apiKey: String,
-    private val model: String = "gemini-1.5-pro"
+    private val model: String = "gemini-2.0-flash"
 ) : LLMClient {
 
     private val client = OkHttpClient.Builder()
@@ -36,7 +37,7 @@ class GeminiClient(
     }
 
     // Increased threshold for 503 overload spikes
-    private val circuitBreaker = com.que.core.CircuitBreaker(failureThreshold = 10, resetTimeout = 60000)
+    private val circuitBreaker = CircuitBreaker(failureThreshold = 10, resetTimeout = 60000)
     private var lastRequestTime = 0L
     private val minRequestIntervalMs = 2000L // Cap at 30 RPM (Safety margin for 60 RPM limit)
 

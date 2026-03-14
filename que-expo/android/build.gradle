@@ -14,14 +14,21 @@ android {
   compileSdkVersion safeExtGet('compileSdkVersion', 34)
   
   defaultConfig {
-    minSdkVersion safeExtGet('minSdkVersion', 21)
+    minSdkVersion safeExtGet('minSdkVersion', 26)
     targetSdkVersion safeExtGet('targetSdkVersion', 34)
-    versionCode 1
-    versionName "1.0"
   }
   
   lintOptions {
     abortOnError false
+  }
+  
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+  
+  kotlinOptions {
+    jvmTarget = "17"
   }
   
   sourceSets {
@@ -34,26 +41,13 @@ android {
 repositories {
   mavenCentral()
   google()
-  // Local AAR repository - check multiple possible locations
-  flatDir {
-    // Try SDK build location first (when building in SDK context)
-    def sdkRoot = file('../../').absolutePath
-    dirs "${sdkRoot}/que-core/build/outputs/aar",
-         "${sdkRoot}/que-platform-android/build/outputs/aar",
-         "${sdkRoot}/que-actions/build/outputs/aar",
-         "${sdkRoot}/que-llm/build/outputs/aar",
-         "${sdkRoot}/que-vision/build/outputs/aar",
-         '../build/outputs/aar',
-         // Also check demo app libs directory (when building in demo app context)
-         '../../que-demo/android/libs',
-         '../../../que-demo/android/libs'
-  }
 }
 
 dependencies {
-  implementation "com.facebook.react:react-android"
-  
-  // Check if we're in SDK build context (has que-core project) or Expo app context
+  // Expo Modules Core - provides the Module base class
+  implementation project(':expo-modules-core')
+
+  // SDK modules - use project references (resolved via settings.gradle includes)
   def hasQueCoreProject = false
   try {
     project(":que-core")
@@ -63,30 +57,26 @@ dependencies {
   }
   
   if (hasQueCoreProject) {
-    // SDK build context - use project references
     implementation project(":que-core")
     implementation project(":que-platform-android")
     implementation project(":que-actions")
     implementation project(":que-llm")
     implementation project(":que-vision")
   } else {
-    // Expo/demo app context - use AAR files from local libs or SDK build outputs
-    def aarDir = file('../../../../que-demo/android/libs')
-    if (aarDir.exists()) {
-      // Use AARs from demo app libs directory
-      implementation fileTree(dir: aarDir, include: ['que-core-debug.aar', 'que-platform-android-debug.aar', 'que-actions-debug.aar', 'que-llm-debug.aar', 'que-vision-debug.aar'])
-    } else {
-      // Fallback: try SDK build outputs
-      def sdkRoot = file('../../').absolutePath
-      implementation fileTree(dir: "${sdkRoot}/que-core/build/outputs/aar", include: ['*.aar'])
-      implementation fileTree(dir: "${sdkRoot}/que-platform-android/build/outputs/aar", include: ['*.aar'])
-      implementation fileTree(dir: "${sdkRoot}/que-actions/build/outputs/aar", include: ['*.aar'])
-      implementation fileTree(dir: "${sdkRoot}/que-llm/build/outputs/aar", include: ['*.aar'])
-      implementation fileTree(dir: "${sdkRoot}/que-vision/build/outputs/aar", include: ['*.aar'])
+    // Fallback: load AARs from the demo app's libs/ directory
+    def libsDirs = [
+      file("${rootDir}/../libs"),
+      file("${rootDir}/libs"),
+    ]
+    
+    for (dir in libsDirs) {
+      if (dir.exists()) {
+        implementation fileTree(dir: dir, include: ['*.aar'])
+        break
+      }
     }
   }
   
   implementation "org.jetbrains.kotlin:kotlin-stdlib"
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
 }
-

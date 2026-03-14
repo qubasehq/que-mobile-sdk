@@ -22,11 +22,25 @@ class PorcupineWakeWordDetector(
     companion object {
         private const val TAG = "PorcupineDetector"
         private const val KEYWORD_ASSET_NAME = "Hey-Que_en_android_v4_0_0.ppn"
-        // TODO: Replace with secure key management
-        private const val ACCESS_KEY = "mdXqwAgZE8FrAdJESmuVlTX/5lDGc0T1mDKH25sKC46//P0HR7fTkg=="
+        
+        // Load key from BuildConfig (generated from local.properties or CI)
+        private val ACCESS_KEY: String? by lazy {
+            try {
+                // We use reflection or direct access if BuildConfig is generated
+                // For now, assume it's available in the same package
+                com.que.platform.android.BuildConfig.PORCUPINE_ACCESS_KEY.takeIf { it.isNotBlank() && !it.startsWith("YOUR_") }
+            } catch (e: Exception) {
+                null
+            }
+        }
     }
 
     fun start() {
+        if (ACCESS_KEY == null) {
+            Log.e(TAG, "Porcupine ACCESS_KEY is missing or invalid. Set it in local.properties.")
+            onApiFailure("Wake word detection disabled: Missing Access Key")
+            return
+        }
         try {
             if (porcupineManager == null) {
                 // Ensure keyword file is available
@@ -43,7 +57,7 @@ class PorcupineWakeWordDetector(
 
                 // Initialize Porcupine
                 porcupineManager = PorcupineManager.Builder()
-                    .setAccessKey(ACCESS_KEY)
+                    .setAccessKey(ACCESS_KEY!!)
                     .setKeywordPath(keywordFile.absolutePath)
                     .build(context) { onWakeWordDetected() }
                  

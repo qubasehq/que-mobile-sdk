@@ -8,11 +8,12 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <application>
         <service
-            android:name=".QueAccessibilityService"
+            android:name=".service.QueAccessibilityService"
             android:exported="true"
             android:label="QUE Mobile Agent"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
@@ -27,24 +28,24 @@
 
         <!-- Cosmic Overlay Service -->
         <service
-            android:name=".CosmicOverlayService"
+            android:name=".service.CosmicOverlayService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="specialUse" />
             
         <service
-            android:name=".QueAgentService"
+            android:name=".service.QueAgentService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="specialUse" />
             
         <service
-            android:name=".FloatingQueButtonService"
+            android:name=".service.FloatingQueButtonService"
             android:enabled="true"
             android:exported="false" />
             
         <service
-            android:name=".QueConversationalService"
+            android:name=".service.QueConversationalService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="microphone" />

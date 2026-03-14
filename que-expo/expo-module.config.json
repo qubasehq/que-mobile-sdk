@@ -3,9 +3,8 @@
         "android"
     ],
     "android": {
-        "package": "com.que.expo",
         "modules": [
-            "QueExpoModule"
+            "com.que.expo.QueExpoModule"
         ]
     }
 }

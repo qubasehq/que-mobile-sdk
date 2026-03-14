@@ -1,7 +1,7 @@
 plugins {
-    alias(libs.plugins.kotlinAndroid) // Using Android plugin to support Android-specific types if needed, or just kotlin-jvm
-    alias(libs.plugins.androidLibrary)
-    alias(libs.plugins.kotlinSerialization)
+    id("com.android.library")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 group = "com.que.core"
@@ -25,7 +25,6 @@ android {
 }
 
 dependencies {
-    implementation(libs.kotlinx.coroutines.core)
-    implementation(libs.kotlinx.serialization.json)
-    // Removed test dependencies as requested
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 }
