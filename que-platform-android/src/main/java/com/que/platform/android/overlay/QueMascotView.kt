@@ -10,11 +10,10 @@ import kotlin.random.Random
 
 /**
  * Custom View that draws and animates the Que Mascot.
- * Features:
- * - Rounded green background with pulsing glow.
- * - Black face circle.
- * - Blinking white eyes.
- * - Diagonal Q-tail.
+ * States:
+ * - IDLE: Static icon.
+ * - THINKING: Green background pulses in and out.
+ * - ACTING: Eyes blink rapidly while looking around.
  */
 class QueMascotView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
@@ -45,48 +44,63 @@ class QueMascotView @JvmOverloads constructor(
     private var eyeScaleY = 1.0f
     private var eyeOffsetX = 0f
     private var bgAlpha = 1.0f
-    private var isRunning = false
+    enum class MascotState {
+        IDLE, THINKING, ACTING
+    }
+
+    private var currentState = MascotState.IDLE
     
+    // Animation properties
     private val blinkIntervalIdle = 4000L
-    private val blinkIntervalRunning = 1500L
+    private val blinkIntervalThinking = 2500L
+    private val blinkIntervalActing = 500L // Fast blinking when acting
     private val blinkDuration = 150L
 
     private var bgAnimator: ValueAnimator? = null
     private var eyeLookAnimator: ValueAnimator? = null
 
     init {
-        startAnimations()
+        // Initial state
+        setVisualState(MascotState.IDLE)
+        startBlinkLoop()
     }
 
     /**
-     * Update the mascot style based on agent activity.
+     * Update the mascot style based on agent activity in a 3-tier system.
      */
-    fun setIsRunning(running: Boolean) {
-        if (this.isRunning == running) return
-        this.isRunning = running
+    fun setVisualState(state: MascotState) {
+        if (this.currentState == state) return
+        this.currentState = state
         
-        // Update background pulse
+        // Update background pulse (THINKING only)
         bgAnimator?.cancel()
-        val duration = if (isRunning) 600L else 2000L
-        val minAlpha = if (isRunning) 0.8f else 0.5f
         
-        bgAnimator = ValueAnimator.ofFloat(minAlpha, 1.0f).apply {
-            this.duration = duration
-            repeatMode = ValueAnimator.REVERSE
-            repeatCount = ValueAnimator.INFINITE
-            interpolator = LinearInterpolator()
-            addUpdateListener { animator ->
-                bgAlpha = animator.animatedValue as Float
-                invalidate()
+        if (state == MascotState.THINKING) {
+            val duration = 800L
+            val minAlpha = 0.3f
+            
+            bgAnimator = ValueAnimator.ofFloat(minAlpha, 1.0f).apply {
+                this.duration = duration
+                repeatMode = ValueAnimator.REVERSE
+                repeatCount = ValueAnimator.INFINITE
+                interpolator = LinearInterpolator()
+                addUpdateListener { animator ->
+                    bgAlpha = animator.animatedValue as Float
+                    invalidate()
+                }
+                start()
             }
-            start()
+        } else {
+            // No background when idle or acting
+            bgAlpha = 0f
+            invalidate()
         }
 
-        // Eye movement (looking around) - Only when running
+        // Eye movement (looking around) - Only when ACTING
         eyeLookAnimator?.cancel()
-        if (isRunning) {
+        if (state == MascotState.ACTING) {
             eyeLookAnimator = ValueAnimator.ofFloat(-8f, 8f).apply {
-                this.duration = 1000
+                this.duration = 800
                 repeatMode = ValueAnimator.REVERSE
                 repeatCount = ValueAnimator.INFINITE
                 interpolator = android.view.animation.AccelerateDecelerateInterpolator()
@@ -101,18 +115,19 @@ class QueMascotView @JvmOverloads constructor(
         }
     }
 
-    private fun startAnimations() {
+    private fun startBlinkLoop() {
         // Blinking animation loop
         post(object : Runnable {
             override fun run() {
                 blinkEyes()
-                val interval = if (isRunning) blinkIntervalRunning else blinkIntervalIdle
-                postDelayed(this, interval + Random.nextLong(1000))
+                val interval = when (currentState) {
+                    MascotState.IDLE -> blinkIntervalIdle
+                    MascotState.THINKING -> blinkIntervalThinking
+                    MascotState.ACTING -> blinkIntervalActing
+                }
+                postDelayed(this, interval + Random.nextLong(if (currentState == MascotState.ACTING) 200 else 1000))
             }
         })
-
-        // Initial background pulse
-        setIsRunning(false)
     }
 
     private fun blinkEyes() {

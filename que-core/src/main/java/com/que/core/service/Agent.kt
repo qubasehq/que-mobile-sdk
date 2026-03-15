@@ -1,7 +1,9 @@
 package com.que.core.service
 import com.que.core.model.AgentCheckpoint
+import com.que.core.model.AgentEvent
 import com.que.core.model.AgentState
 
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -14,6 +16,12 @@ interface Agent {
      * Observes this flow to update UI.
      */
     val state: StateFlow<AgentState>
+
+    /**
+     * Flow of agent events for bidirectional communication.
+     * Emits UserQuestionAsked, Narration, ConfirmationRequired, etc.
+     */
+    val events: SharedFlow<AgentEvent>
 
     /**
      * Starts a new task.
@@ -42,6 +50,13 @@ interface Agent {
     fun isPaused(): Boolean
     
     /**
+     * Resume the agent loop after it paused for user input.
+     * Called when the user answers a question or confirms/denies an action.
+     * @param reply The user's reply text (or "yes"/"no" for confirmations).
+     */
+    fun resumeWithUserReply(reply: String)
+    
+    /**
      * Creates a checkpoint of the current agent state.
      */
     suspend fun createCheckpoint(): AgentCheckpoint
@@ -51,3 +66,4 @@ interface Agent {
      */
     suspend fun restoreFromCheckpoint(checkpoint: AgentCheckpoint)
 }
+

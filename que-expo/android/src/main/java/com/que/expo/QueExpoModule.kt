@@ -17,13 +17,16 @@ class QueExpoModule : Module() {
     companion object {
         private const val TAG = "QueExpoModule"
         private const val STATE_CHANGE_EVENT = "onAgentStateChange"
+        private const val USER_QUESTION_EVENT = "onUserQuestion"
+        private const val NARRATION_EVENT = "onNarration"
+        private const val CONFIRMATION_EVENT = "onConfirmationRequired"
     }
 
     override fun definition() = ModuleDefinition {
 
         Name("QueMobileSDK")
 
-        Events(STATE_CHANGE_EVENT)
+        Events(STATE_CHANGE_EVENT, USER_QUESTION_EVENT, NARRATION_EVENT, CONFIRMATION_EVENT)
 
         // ─── Permissions ─────────────────────────
 
@@ -93,7 +96,7 @@ class QueExpoModule : Module() {
 
         // ─── Agent Control ───────────────────────
 
-        AsyncFunction("startAgent") { task: String, maxSteps: Int ->
+        AsyncFunction("startAgent") { task: String, maxSteps: Int, model: String ->
             val ctx = appContext.reactContext
                 ?: throw Exception("React context not available")
 
@@ -105,7 +108,7 @@ class QueExpoModule : Module() {
                 throw Exception("Overlay permission not granted. Please grant it in Settings.")
             }
 
-            Log.d(TAG, "Starting agent — task: '$task', maxSteps: $maxSteps")
+            Log.d(TAG, "Starting agent — task: '$task', maxSteps: $maxSteps, model: $model")
 
             // Register state listener before starting
             QueAgentService.setStateListener { stateName, message ->
@@ -119,10 +122,39 @@ class QueExpoModule : Module() {
                 }
             }
 
+            // Register agent event listener for bidirectional communication
+            QueAgentService.setAgentEventListener { eventType, data ->
+                try {
+                    when (eventType) {
+                        "onUserQuestion" -> {
+                            sendEvent(USER_QUESTION_EVENT, mapOf(
+                                "question" to (data["question"] as? String ?: ""),
+                                "options" to (data["options"] as? List<*>)
+                            ))
+                        }
+                        "onNarration" -> {
+                            sendEvent(NARRATION_EVENT, mapOf(
+                                "message" to (data["message"] as? String ?: ""),
+                                "type" to (data["type"] as? String ?: "progress")
+                            ))
+                        }
+                        "onConfirmationRequired" -> {
+                            sendEvent(CONFIRMATION_EVENT, mapOf(
+                                "summary" to (data["summary"] as? String ?: ""),
+                                "actionPreview" to (data["actionPreview"] as? String ?: "")
+                            ))
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to send agent event: $eventType", e)
+                }
+            }
+
             QueAgentService.start(
                 context = ctx,
                 task = task,
                 apiKey = "",
+                model = model,
                 maxSteps = maxSteps
             )
             null
@@ -134,6 +166,7 @@ class QueExpoModule : Module() {
             Log.d(TAG, "Stopping agent")
             QueAgentService.stop(ctx)
             QueAgentService.setStateListener(null)
+            QueAgentService.setAgentEventListener(null)
 
             sendEvent(STATE_CHANGE_EVENT, mapOf(
                 "state" to "Stopped",
@@ -156,6 +189,20 @@ class QueExpoModule : Module() {
             null
         }
 
+        // ─── Bidirectional Communication ─────────
+
+        AsyncFunction("setVoiceEnabled") { enabled: Boolean ->
+            Log.d(TAG, "Setting voice enabled: $enabled")
+            QueAgentService.isVoiceEnabled = enabled
+            null
+        }
+
+        AsyncFunction("replyToAgent") { reply: String ->
+            Log.d(TAG, "User reply to agent: $reply")
+            QueAgentService.replyToAgent(reply)
+            null
+        }
+
         Function("getAgentState") {
             mapOf(
                 "state" to QueAgentService.currentStateName,
@@ -167,6 +214,7 @@ class QueExpoModule : Module() {
 
         OnDestroy {
             QueAgentService.setStateListener(null)
+            QueAgentService.setAgentEventListener(null)
         }
     }
 }

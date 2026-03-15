@@ -41,21 +41,34 @@ class QuePerceptionEngine(
         val startTime = System.currentTimeMillis()
         AgentLogger.d(TAG, "Starting capture...")
 
-        // Get service via new ServiceManager safety wrapper
         val service = com.que.core.registry.ServiceManager.getService<QueAccessibilityService>() ?: run {
-            AgentLogger.e(TAG, "Service disconnected during capture")
-            throw IllegalStateException("Accessibility service not connected")
+            AgentLogger.w(TAG, "Service disconnected during capture")
+            return@coroutineScope createEmptySnapshot()
         }
 
-            // CONCURRENT DATA GATHERING (like Blurr)
+        try {
+            // CONCURRENT DATA GATHERING
             val rootNodeDeferred = async { service.getRootNode() }
             val keyboardDeferred = async { isKeyboardOpen() }
             val activityDeferred = async { service.currentActivityName }
-            val screenshotDeferred = async { service.captureScreenshot() }
+            val screenshotDeferred = async { 
+                try {
+                    kotlinx.coroutines.withTimeout(3000) {
+                        service.captureScreenshot()
+                    }
+                } catch (e: Exception) {
+                    AgentLogger.w(TAG, "Screenshot capture timed out or failed")
+                    null
+                }
+            }
 
             // Await all concurrently
             val root = rootNodeDeferred.await()
-                ?: throw IllegalStateException("Root node is null")
+            if (root == null) {
+                AgentLogger.w(TAG, "Root node is null, screen might be transient or locked")
+                return@coroutineScope createEmptySnapshot()
+            }
+            
             val isKeyboard = keyboardDeferred.await()
             val activity = activityDeferred.await()
             val bitmap = screenshotDeferred.await()
@@ -63,7 +76,6 @@ class QuePerceptionEngine(
             // Get scroll information
             val (scrollAbove, scrollBelow) = getScrollInfo(root)
 
-            // Capture screenshot bytes
             // Capture screenshot bytes
             val screenshotBytes = withContext(Dispatchers.IO) {
                 bitmap?.let { bmp ->
@@ -77,47 +89,59 @@ class QuePerceptionEngine(
                 }
             }
 
+            // Parse UI hierarchy
+            val (width, height) = getScreenDimensions()
+            var snapshot = withContext(Dispatchers.Default) {
+                 parser.parse(root, width, height)
+            }
+            
+            // Detect new elements
+            val currentIds = snapshot.interactiveElements.map { it.id }.toSet()
+            val newIds = currentIds - previousElementIds
+            previousElementIds = currentIds
 
-        // Parse UI hierarchy
-        // Parse UI hierarchy
-        val (width, height) = getScreenDimensions()
-        var snapshot = withContext(Dispatchers.Default) {
-             parser.parse(root, width, height)
+            // Build enhanced description with scroll hints
+            val enhancedDescription = buildEnhancedDescription(
+                snapshot.simplifiedDescription,
+                scrollAbove,
+                scrollBelow,
+                newIds.size
+            )
+
+            // Create final snapshot with all enhancements
+            val finalSnapshot = snapshot.copy(
+                simplifiedDescription = enhancedDescription,
+                activityName = activity ?: "Unknown",
+                screenshot = screenshotBytes,
+                scrollablePixelsAbove = scrollAbove,
+                scrollablePixelsBelow = scrollBelow,
+                isKeyboardOpen = isKeyboard,
+                visualAnalysis = null,
+                ocrText = null,
+                detectedObjects = emptyList()
+            )
+            
+            // Update the registry so Actions can find these elements
+            com.que.core.registry.ElementRegistry.update(finalSnapshot.interactiveElements)
+            
+            // Update visual debug overlay
+            service.debugOverlayController?.updateElements(finalSnapshot.interactiveElements)
+            
+            finalSnapshot
+        } catch (e: Exception) {
+            AgentLogger.e(TAG, "Critical failure during perception capture", e)
+            createEmptySnapshot()
         }
-        
-        // Detect new elements
-        val currentIds = snapshot.interactiveElements.map { it.id }.toSet()
-        val newIds = currentIds - previousElementIds
-        previousElementIds = currentIds
+    }
 
-        // Build enhanced description with scroll hints
-        val enhancedDescription = buildEnhancedDescription(
-            snapshot.simplifiedDescription,
-            scrollAbove,
-            scrollBelow,
-            newIds.size
+    private fun createEmptySnapshot(): ScreenSnapshot {
+        return ScreenSnapshot(
+            hierarchyXml = "",
+            simplifiedDescription = "[Transient screen or error - waiting for state to stabilize]",
+            interactiveElements = emptyList(),
+            activityName = "Transient",
+            screenshot = null
         )
-
-        // Create final snapshot with all enhancements
-        snapshot = snapshot.copy(
-            simplifiedDescription = enhancedDescription,
-            activityName = activity,
-            screenshot = screenshotBytes,
-            scrollablePixelsAbove = scrollAbove,
-            scrollablePixelsBelow = scrollBelow,
-            isKeyboardOpen = isKeyboard,
-            visualAnalysis = null, // TODO: Implement Visual Analysis
-            ocrText = null, // TODO: Implement OCR
-            detectedObjects = emptyList() // TODO: Implement Object Detection
-        )
-        
-        // Update the registry so Actions can find these elements
-        com.que.core.registry.ElementRegistry.update(snapshot.interactiveElements)
-        
-        // Update visual debug overlay
-        service.debugOverlayController?.updateElements(snapshot.interactiveElements)
-        
-        snapshot
     }
 
     /**

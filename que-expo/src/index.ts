@@ -11,7 +11,8 @@ export type AgentStateName =
     | 'Error'
     | 'Started'
     | 'Stopped'
-    | 'Paused';
+    | 'Paused'
+    | 'WaitingForUser';
 
 export interface AgentStateEvent {
     state: AgentStateName;
@@ -21,6 +22,24 @@ export interface AgentStateEvent {
 export interface AgentStatus {
     state: AgentStateName;
     isRunning: boolean;
+}
+
+/** Emitted when the agent needs to ask the user a question */
+export interface UserQuestionEvent {
+    question: string;
+    options?: string[];
+}
+
+/** Emitted when the agent narrates what it's doing */
+export interface NarrationEvent {
+    message: string;
+    type: 'progress' | 'found' | 'warning' | 'done';
+}
+
+/** Emitted when the agent needs user confirmation before an irreversible action */
+export interface ConfirmationEvent {
+    summary: string;
+    actionPreview: string;
 }
 
 // ─── Native Module ───────────────────────────────
@@ -80,8 +99,8 @@ export function setApiKey(apiKey: string): void {
 // ─── Agent Control ───────────────────────────────
 
 /** Start the AI agent with a task and optional max steps */
-export async function startAgent(task: string, maxSteps: number = 30): Promise<void> {
-    return QueMobileSDK.startAgent(task, maxSteps);
+export async function startAgent(task: string, maxSteps: number = 30, model: string): Promise<void> {
+    return QueMobileSDK.startAgent(task, maxSteps, model);
 }
 
 /** Stop the running agent */
@@ -104,6 +123,24 @@ export function getAgentState(): AgentStatus {
     return QueMobileSDK.getAgentState();
 }
 
+// ─── Bidirectional Communication ─────────────────
+
+/**
+ * Toggle the agent's text-to-speech voice feedback.
+ */
+export async function setVoiceEnabled(enabled: boolean): Promise<void> {
+    return QueMobileSDK.setVoiceEnabled(enabled);
+}
+
+/**
+ * Reply to the agent when it's waiting for user input.
+ * Use after receiving an onUserQuestion or onConfirmationRequired event.
+ * For confirmations, reply with "yes"/"no"/"confirm"/"deny".
+ */
+export async function replyToAgent(reply: string): Promise<void> {
+    return QueMobileSDK.replyToAgent(reply);
+}
+
 // ─── Events ──────────────────────────────────────
 
 /** Subscribe to agent state change events */
@@ -111,6 +148,27 @@ export function addStateListener(
     listener: (event: AgentStateEvent) => void
 ): Subscription {
     return emitter.addListener('onAgentStateChange', listener);
+}
+
+/** Subscribe to agent questions (when agent uses ask_user action) */
+export function addUserQuestionListener(
+    listener: (event: UserQuestionEvent) => void
+): Subscription {
+    return emitter.addListener('onUserQuestion', listener);
+}
+
+/** Subscribe to agent narrations (real-time progress updates) */
+export function addNarrationListener(
+    listener: (event: NarrationEvent) => void
+): Subscription {
+    return emitter.addListener('onNarration', listener);
+}
+
+/** Subscribe to confirmation requests (before irreversible actions) */
+export function addConfirmationListener(
+    listener: (event: ConfirmationEvent) => void
+): Subscription {
+    return emitter.addListener('onConfirmationRequired', listener);
 }
 
 // ─── Default Export (convenience) ────────────────
@@ -136,8 +194,14 @@ const QueSDK = {
     resumeAgent,
     getAgentState,
 
+    // Bidirectional Communication
+    replyToAgent,
+
     // Events
     addStateListener,
+    addUserQuestionListener,
+    addNarrationListener,
+    addConfirmationListener,
 };
 
 export default QueSDK;

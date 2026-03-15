@@ -25,15 +25,15 @@ class CosmicWaveView @JvmOverloads constructor(
     private val maxSpeedIncrease = 4.0f
     private val jitterAmount = 0.1f
 
-    // Cosmic theme colors - blue and pink mix
+    // Cosmic theme colors - rainbow mix
     private val waveColors = intArrayOf(
-        "#8A2BE2".toColorInt(), // Blue Violet
-        "#4169E1".toColorInt(), // Royal Blue
-        "#FF1493".toColorInt(), // Deep Pink
-        "#9370DB".toColorInt(), // Medium Purple
-        "#00BFFF".toColorInt(), // Deep Sky Blue
-        "#FF69B4".toColorInt(), // Hot Pink
-        "#DA70D6".toColorInt()  // Orchid
+        Color.parseColor("#FF0000"), // Red
+        Color.parseColor("#FF7F00"), // Orange
+        Color.parseColor("#FFFF00"), // Yellow
+        Color.parseColor("#00FF00"), // Green
+        Color.parseColor("#0000FF"), // Blue
+        Color.parseColor("#4B0082"), // Indigo
+        Color.parseColor("#9400D3")  // Violet
     )
 
     private var amplitudeAnimator: ValueAnimator? = null
@@ -45,6 +45,7 @@ class CosmicWaveView @JvmOverloads constructor(
     private val waveAmplitudeMultipliers: FloatArray
 
     private var audioAmplitude = minIdleAmplitude
+    private var lastTime = System.currentTimeMillis()
 
     init {
         setLayerType(LAYER_TYPE_HARDWARE, null)
@@ -69,21 +70,6 @@ class CosmicWaveView @JvmOverloads constructor(
                 maskFilter = blurFilter
             })
             wavePaths.add(Path())
-        }
-
-        // Animation loop
-        ValueAnimator.ofFloat(0f, 1f).apply {
-            interpolator = LinearInterpolator()
-            duration = 5000
-            repeatCount = ValueAnimator.INFINITE
-            addUpdateListener {
-                val speedFactor = 1.0f + (audioAmplitude * maxSpeedIncrease)
-                for (i in 0 until waveCount) {
-                    wavePhaseShifts[i] += (waveSpeeds[i] * speedFactor)
-                }
-                invalidate()
-            }
-            start()
         }
     }
 
@@ -110,7 +96,7 @@ class CosmicWaveView @JvmOverloads constructor(
             val paint = wavePaints[i]
             val color = waveColors[i % waveColors.size]
             paint.shader = LinearGradient(
-                0f, h / 2f, 0f, h.toFloat(),
+                0f, 0f, 0f, h.toFloat(),
                 color, Color.TRANSPARENT, Shader.TileMode.CLAMP
             )
         }
@@ -118,14 +104,25 @@ class CosmicWaveView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        
+        val currentTime = System.currentTimeMillis()
+        val deltaTime = (currentTime - lastTime)
+        lastTime = currentTime
+        
+        val speedFactor = 1.0f + (audioAmplitude * maxSpeedIncrease)
 
         for (i in 0 until waveCount) {
+            // Update phase shift smoothly over time
+            wavePhaseShifts[i] += (waveSpeeds[i] * speedFactor * deltaTime / 16f)
+            
             wavePaths[i].reset()
             // Draw from TOP down
             wavePaths[i].moveTo(0f, 0f)
             val waveMaxHeight = height * audioAmplitude * waveAmplitudeMultipliers[i]
             val currentJitter = (Random.nextFloat() - 0.5f) * waveMaxHeight * jitterAmount
-            for (x in 0..width step 5) {
+            
+            // Step 10px instead of 5px for better performance since it's smoothing now
+            for (x in 0..width step 10) {
                 val sineInput = (x * (Math.PI * 2 / width) * waveFrequencies[i]) + wavePhaseShifts[i]
                 val sineOutput = (sin(sineInput) * 0.5f + 0.5f)
                 val y = (waveMaxHeight * sineOutput) + currentJitter
@@ -135,5 +132,8 @@ class CosmicWaveView @JvmOverloads constructor(
             wavePaths[i].close()
             canvas.drawPath(wavePaths[i], wavePaints[i])
         }
+        
+        // Loop animation!
+        postInvalidateOnAnimation()
     }
 }

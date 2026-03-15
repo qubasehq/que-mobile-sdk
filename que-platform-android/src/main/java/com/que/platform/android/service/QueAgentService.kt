@@ -1,6 +1,7 @@
 package com.que.platform.android.service
 import com.que.core.engine.QueAgent
 import com.que.core.interruption.InterruptionHandler
+import com.que.core.model.AgentEvent
 import com.que.core.model.AgentSettings
 import com.que.core.model.AgentState
 import com.que.core.registry.ServiceManager
@@ -43,6 +44,11 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.lang.ref.WeakReference
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+
+/**
+ * Callback for bidirectional agent events (question, narration, confirmation).
+ */
+typealias AgentEventListener = (eventType: String, data: Map<String, Any?>) -> Unit
 
 /**
  * A Foreground Service responsible for hosting and running the AI Agent.
@@ -97,18 +103,44 @@ class QueAgentService : Service() {
         var currentStateName: String = "Idle"
             private set
             
+        @Volatile
+        var isVoiceEnabled: Boolean = true
+            
         // Securely hold API key in memory to avoid passing via Intent extras (which can be dumped)
         private var sessionApiKey: String? = null
 
         // External state listener (for Expo module or other consumers)
         private var stateListener: ((stateName: String, message: String) -> Unit)? = null
 
+        // External event listener for bidirectional communication
+        private var agentEventListener: AgentEventListener? = null
+        
+        // Weak reference to active agent for replyToAgent
+        private var activeAgentRef: WeakReference<QueAgent>? = null
+
         fun setStateListener(listener: ((stateName: String, message: String) -> Unit)?) {
             stateListener = listener
         }
 
+        fun setAgentEventListener(listener: AgentEventListener?) {
+            agentEventListener = listener
+        }
+
         fun setApiKey(apiKey: String) {
             sessionApiKey = apiKey
+        }
+
+        /**
+         * Reply to the agent when it's waiting for user input (ask_user/confirm).
+         */
+        fun replyToAgent(reply: String) {
+            val agent = activeAgentRef?.get()
+            if (agent != null) {
+                AgentLogger.d(TAG, "Forwarding user reply to agent: $reply")
+                agent.resumeWithUserReply(reply)
+            } else {
+                AgentLogger.e(TAG, "Cannot reply: no active agent")
+            }
         }
 
         private fun notifyStateChange(stateName: String, message: String = "") {
@@ -330,7 +362,7 @@ class QueAgentService : Service() {
 
             try {
                 Log.d(TAG, "Calling agent.run()...")
-                speechCoordinator.speakToUser("Starting task")
+                speechCoordinator.speakToUser("I'm starting my engine")
                 val finalState = agent.run(task)
                 
                 when (finalState) {
@@ -355,7 +387,12 @@ class QueAgentService : Service() {
         }
 
         Log.i(TAG, "=== TASK QUEUE EMPTY, STOPPING SERVICE ===")
-        stopSelf()
+        // Give the final TTS (Task Completed/Failed) time to play before shutting down
+        serviceScope.launch {
+            // Wait for speech to finish before stopping service
+            kotlinx.coroutines.delay(6000)
+            stopSelf()
+        }
     }
 
     private fun initializeAgent() {
@@ -417,6 +454,7 @@ class QueAgentService : Service() {
             speech = speechService,
             guidance = guidance
         )
+        activeAgentRef = WeakReference(agent)
         Log.d(TAG, "✓ QueAgent instance created")
         
         // Forward agent state to overlay service
@@ -463,16 +501,77 @@ class QueAgentService : Service() {
                         CosmicOverlayService.addLog("[ACTING] ${state.actionDescription}")
                         notificationManager.updateStatus("Acting: ${state.actionDescription.take(20)}...")
                         notifyStateChange("Acting", state.actionDescription)
+                        if (isVoiceEnabled) speechCoordinator.speakToUser(state.actionDescription)
+                    }
+                    is com.que.core.model.AgentState.WaitingForUser -> {
+                        CosmicOverlayService.addLog("[WAITING] ${state.reason}: ${state.question}")
+                        notificationManager.updateStatus("Waiting for user...")
+                        notifyStateChange("WaitingForUser", state.question)
+                        if (isVoiceEnabled) speechCoordinator.speakToUser(state.question)
                     }
                     is com.que.core.model.AgentState.Finished -> {
                         CosmicOverlayService.addLog("[FINISHED] ${state.result}")
                         notifyStateChange("Finished", state.result)
+                        // Voice trigger: task completed
+                        if (isVoiceEnabled) speechCoordinator.speakToUser("Done! Here's what happened: ${state.result}")
                     }
                     is com.que.core.model.AgentState.Error -> {
                         CosmicOverlayService.addLog("[ERROR] ${state.message}")
                         notifyStateChange("Error", state.message)
+                        // Voice trigger: task failed
+                        if (isVoiceEnabled) speechCoordinator.speakToUser("I ran into a problem: ${state.message}")
                     }
                     else -> {}
+                }
+            }
+        }
+        
+        // Forward agent events for bidirectional communication
+        serviceScope.launch {
+            agent.events.collect { event ->
+                when (event) {
+                    is com.que.core.model.AgentEvent.UserQuestionAsked -> {
+                        // Show interactive question panel in overlay
+                        CosmicOverlayService.showQuestion(
+                            question = event.question,
+                            options = event.options,
+                            onReply = { reply -> QueAgentService.replyToAgent(reply) }
+                        )
+                        // Also notify Expo bridge
+                        agentEventListener?.invoke("onUserQuestion", mapOf(
+                            "question" to event.question,
+                            "options" to event.options
+                        ))
+                    }
+                    is com.que.core.model.AgentEvent.Narration -> {
+                        // Show animated narration banner in overlay
+                        CosmicOverlayService.showNarration(event.message, event.type)
+                        
+                        agentEventListener?.invoke("onNarration", mapOf(
+                            "message" to event.message,
+                            "type" to event.type
+                        ))
+                        if (isVoiceEnabled) speechCoordinator.speakToUser(event.message)
+                    }
+                    is com.que.core.model.AgentEvent.ConfirmationRequired -> {
+                        // Show interactive confirmation panel in overlay
+                        CosmicOverlayService.showConfirmation(
+                            summary = event.summary,
+                            actionPreview = event.actionPreview,
+                            onReply = { reply -> QueAgentService.replyToAgent(reply) }
+                        )
+                        
+                        agentEventListener?.invoke("onConfirmationRequired", mapOf(
+                            "summary" to event.summary,
+                            "actionPreview" to event.actionPreview
+                        ))
+                    }
+                    is com.que.core.model.AgentEvent.UserReplied -> {
+                        CosmicOverlayService.addLog("[USER REPLY] ${event.reply}")
+                    }
+                    is com.que.core.model.AgentEvent.TaskDecomposed -> {
+                        CosmicOverlayService.addLog("[PLAN] ${event.steps.size} steps decomposed")
+                    }
                 }
             }
         }

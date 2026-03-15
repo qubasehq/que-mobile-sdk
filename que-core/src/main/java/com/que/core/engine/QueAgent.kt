@@ -5,6 +5,7 @@ import com.que.core.interruption.InterruptionDetector
 import com.que.core.interruption.InterruptionHandler
 import com.que.core.interruption.InterruptionType
 import com.que.core.model.AgentCheckpoint
+import com.que.core.model.AgentEvent
 import com.que.core.model.AgentOutput
 import com.que.core.model.AgentSettings
 import com.que.core.model.AgentState
@@ -42,11 +43,15 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -105,6 +110,13 @@ class QueAgent(
 
     private val _state = MutableStateFlow<AgentState>(AgentState.Idle)
     override val state: StateFlow<AgentState> = _state.asStateFlow()
+
+    // Event flow for bidirectional communication (ask_user, narrate, confirm)
+    private val _events = MutableSharedFlow<AgentEvent>(extraBufferCapacity = 16)
+    override val events: SharedFlow<AgentEvent> = _events.asSharedFlow()
+
+    // Channel for receiving user replies when the loop is paused for ask_user/confirm
+    private val userReplyChannel = Channel<String>(capacity = 1)
 
     private var currentJob: Job? = null
     private val promptBuilder = PromptBuilder()
@@ -213,6 +225,18 @@ class QueAgent(
     }
     
     override fun isPaused(): Boolean = isPaused
+    
+    /**
+     * Resume the agent loop after it paused for user input.
+     * Called from the platform layer when the user answers a question or confirms/denies.
+     */
+    override fun resumeWithUserReply(reply: String) {
+        log("User replied: $reply", "I")
+        scope.launch {
+            _events.emit(AgentEvent.UserReplied(reply))
+            userReplyChannel.send(reply)
+        }
+    }
     
     /**
      * Waits while the agent is paused, checking periodically
@@ -684,7 +708,84 @@ class QueAgent(
         val actionResults = mutableListOf<ActionResult>()
 
         for ((index, action) in agentOutput.actions.withIndex()) {
-            _state.value = AgentState.Acting("${action.javaClass.simpleName} (${index + 1}/${agentOutput.actions.size})")
+            // Handle bidirectional communication actions BEFORE executing
+            when (action) {
+                is Action.AskUser -> {
+                    log("🙋 ask_user: ${action.question}", "I")
+                    _events.emit(AgentEvent.UserQuestionAsked(action.question, action.options.ifEmpty { null }))
+                    _state.value = AgentState.WaitingForUser(
+                        reason = "question",
+                        question = action.question,
+                        options = action.options.ifEmpty { null }
+                    )
+                    
+                    // Speak the question aloud
+                    if (settings.enableSpeech) speech?.speak(action.question)
+                    
+                    // Pause and wait for user reply (indefinitely)
+                    log("⏸️ Agent paused — waiting for user reply...", "I")
+                    val reply = userReplyChannel.receive()
+                    log("▶️ User replied: $reply", "I")
+                    
+                    // Inject reply into agent memory
+                    memory.addCorrectionNote("User answered your question '${action.question}' with: $reply")
+                    
+                    actionResults.add(ActionResult(success = true, message = "User replied: $reply", data = mapOf("reply" to reply)))
+                    _state.value = AgentState.Thinking("Processing user reply")
+                    continue // Skip normal execution, go to next action
+                }
+                
+                is Action.Narrate -> {
+                    log("📢 narrate [${action.type}]: ${action.message}", "I")
+                    _events.emit(AgentEvent.Narration(action.message, action.type))
+                    
+                    // Speak key findings aloud
+                    if (settings.enableSpeech && action.type == "found") {
+                        speech?.speak(action.message)
+                    }
+                    
+                    actionResults.add(ActionResult(success = true, message = "Narrated: ${action.message}"))
+                    continue // Non-blocking, just emit and continue
+                }
+                
+                is Action.Confirm -> {
+                    log("⚠️ confirm: ${action.summary} — ${action.actionPreview}", "I")
+                    _events.emit(AgentEvent.ConfirmationRequired(action.summary, action.actionPreview))
+                    _state.value = AgentState.WaitingForUser(
+                        reason = "confirmation",
+                        question = "${action.summary}\n${action.actionPreview}"
+                    )
+                    
+                    // Speak the confirmation request
+                    if (settings.enableSpeech) speech?.speak("${action.summary}. ${action.actionPreview}")
+                    
+                    // Pause and wait for user confirmation (indefinitely)
+                    log("⏸️ Agent paused — waiting for user confirmation...", "I")
+                    val reply = userReplyChannel.receive()
+                    log("▶️ User confirmation reply: $reply", "I")
+                    
+                    val approved = reply.lowercase().let { 
+                        it == "yes" || it == "confirm" || it == "ok" || it == "approve" || it == "go ahead" || it == "proceed"
+                    }
+                    
+                    if (!approved) {
+                        log("🚫 User denied action. Aborting this action chain.", "W")
+                        memory.addCorrectionNote("User DENIED your proposed action: '${action.summary}'. They said: '$reply'. Respect their decision and adjust your approach.")
+                        actionResults.add(ActionResult(success = false, message = "User denied: $reply"))
+                        _state.value = AgentState.Thinking("User denied action, re-planning")
+                        break // Stop executing remaining actions in this step
+                    }
+                    
+                    memory.addCorrectionNote("User APPROVED your proposed action: '${action.summary}'.")
+                    actionResults.add(ActionResult(success = true, message = "User approved"))
+                    _state.value = AgentState.Thinking("User approved, continuing")
+                    continue
+                }
+                
+                else -> { /* Normal action — fall through to standard execution below */ }
+            }
+
+            _state.value = AgentState.Acting("${action.toHumanReadableString()} (${index + 1}/${agentOutput.actions.size})")
             log("Exec: $action", "D")
             
             // Execute with Recovery

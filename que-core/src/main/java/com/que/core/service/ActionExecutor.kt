@@ -17,35 +17,52 @@ import kotlin.reflect.KClass
  */
 @Serializable
 sealed class Action {
+    /** Generates a conversational description of the action for TTS and UI */
+    open fun toHumanReadableString(): String {
+        return "Executing ${this::class.simpleName}"
+    }
+
     @Serializable
-    data class Tap(val elementId: Int) : Action()
+    data class Tap(val elementId: Int) : Action() {
+        override fun toHumanReadableString() = "Tapping on the screen."
+    }
     
     @Serializable
-    data class LongPress(val elementId: Int) : Action()
+    data class LongPress(val elementId: Int) : Action() {
+        override fun toHumanReadableString() = "Long pressing."
+    }
     
     @Serializable
-    data class Type(val text: String, val elementId: Int? = null, val pressEnter: Boolean = true) : Action()
+    data class Type(val text: String, val elementId: Int? = null, val pressEnter: Boolean = true) : Action() {
+        override fun toHumanReadableString() = "Typing: $text"
+    }
     
     @Serializable
-    data class Scroll(val direction: Direction, val pixels: Int = 500, val duration: Long = 500) : Action()
+    data class Scroll(val direction: Direction, val pixels: Int = 500, val duration: Long = 500) : Action() {
+        override fun toHumanReadableString() = "Scrolling ${direction.name.lowercase()}."
+    }
     
     @Serializable
     data object Enter : Action()
     
     @Serializable
-    data object Back : Action()
+    data object Back : Action() { override fun toHumanReadableString() = "Going back." }
     
     @Serializable
-    data object Home : Action()
+    data object Home : Action() { override fun toHumanReadableString() = "Going to the home screen." }
     
     @Serializable
-    data object SwitchApp : Action()
+    data object SwitchApp : Action() { override fun toHumanReadableString() = "Switching apps." }
     
     @Serializable
-    data class OpenApp(val appName: String) : Action()
+    data class OpenApp(val appName: String) : Action() {
+        override fun toHumanReadableString() = "Opening $appName."
+    }
     
     @Serializable
-    data class SearchGoogle(val query: String) : Action()
+    data class SearchGoogle(val query: String) : Action() {
+        override fun toHumanReadableString() = "Searching Google for $query."
+    }
     
     @Serializable
     data class LaunchIntent(val intentName: String, val parameters: Map<String, String>) : Action()
@@ -75,11 +92,11 @@ sealed class Action {
     @Serializable data class Fling(val direction: Direction, val velocity: Float = 3000f) : Action()
 
     // Text Operations
-    @Serializable data class ClearText(val elementId: Int) : Action()
-    @Serializable data class ReplaceText(val elementId: Int, val newText: String) : Action()
+    @Serializable data class ClearText(val elementId: Int) : Action() { override fun toHumanReadableString() = "Clearing the text field." }
+    @Serializable data class ReplaceText(val elementId: Int, val newText: String) : Action() { override fun toHumanReadableString() = "Updating text to: $newText" }
     @Serializable data object SelectAll : Action()
-    @Serializable data object Copy : Action()
-    @Serializable data object Paste : Action()
+    @Serializable data object Copy : Action() { override fun toHumanReadableString() = "Copying to clipboard." }
+    @Serializable data object Paste : Action() { override fun toHumanReadableString() = "Pasting from clipboard." }
 
     // Smart Waiting
     @Serializable data class WaitForElement(val elementDescription: String, val timeoutMs: Long = 10000) : Action()
@@ -87,14 +104,19 @@ sealed class Action {
     @Serializable data class WaitForIdle(val timeoutMs: Long = 5000) : Action()
 
     // System Actions
-    @Serializable data class TakeScreenshot(val fileName: String? = null) : Action()
-    @Serializable data object CloseApp : Action()
-    @Serializable data object OpenNotifications : Action()
+    @Serializable data class TakeScreenshot(val fileName: String? = null) : Action() { override fun toHumanReadableString() = "Taking a screenshot." }
+    @Serializable data object CloseApp : Action() { override fun toHumanReadableString() = "Closing the app." }
+    @Serializable data object OpenNotifications : Action() { override fun toHumanReadableString() = "Opening notifications." }
     @Serializable data class SetVolume(val streamType: VolumeStream, val level: Int) : Action()
     
     // Clipboard
-    @Serializable data class SetClipboard(val text: String) : Action()
+    @Serializable data class SetClipboard(val text: String) : Action() { override fun toHumanReadableString() = "Saving to clipboard." }
     @Serializable data object GetClipboard : Action()
+    
+    // Bidirectional Communication Actions
+    @Serializable data class AskUser(val question: String, val options: List<String> = emptyList()) : Action()
+    @Serializable data class Narrate(val message: String, val type: String = "progress") : Action()
+    @Serializable data class Confirm(val summary: String, val actionPreview: String) : Action()
     
     @Serializable
     data class Custom(val name: String, val params: Map<String, String>) : Action()
@@ -255,6 +277,25 @@ sealed class Action {
                     args["duration"] as? Long ?: 300L
                 )
             },
+
+            // Bidirectional Communication
+            "ask_user" to Spec("ask_user", "Pause and ask the user a question before continuing. Use when the task is ambiguous, there are multiple choices, or before irreversible actions.", listOf(
+                ParamSpec("question", String::class, "The question to ask the user."),
+                ParamSpec("options", List::class, "Optional list of quick-reply options for the user.", false)
+            )) { args ->
+                @Suppress("UNCHECKED_CAST")
+                AskUser(args["question"] as String, args["options"] as? List<String> ?: emptyList())
+            },
+
+            "narrate" to Spec("narrate", "Send a real-time status update to the user without pausing. Use at every meaningful milestone.", listOf(
+                ParamSpec("message", String::class, "What the agent is doing or found."),
+                ParamSpec("type", String::class, "One of: progress, found, warning, done.", false)
+            )) { args -> Narrate(args["message"] as String, args["type"] as? String ?: "progress") },
+
+            "confirm" to Spec("confirm", "Show the user what you are about to do and get approval before proceeding. MUST be used before any irreversible action (posting, sending, purchasing, deleting).", listOf(
+                ParamSpec("summary", String::class, "Human-readable summary of the action."),
+                ParamSpec("action_preview", String::class, "Exact description of what will happen.")
+            )) { args -> Confirm(args["summary"] as String, args["action_preview"] as String) },
 
             // Finish
             "finish" to Spec("finish", "Mark the task as complete.", listOf(

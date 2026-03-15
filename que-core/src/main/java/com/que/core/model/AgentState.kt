@@ -34,4 +34,14 @@ sealed class AgentState {
      * Agent encountered an error and stopped.
      */
     data class Error(val message: String, val cause: Throwable? = null) : AgentState()
+
+    /**
+     * Agent is waiting for user input (question, confirmation, etc.).
+     * The agent loop is paused until resumeWithUserReply() is called.
+     */
+    data class WaitingForUser(
+        val reason: String,
+        val question: String = "",
+        val options: List<String>? = null
+    ) : AgentState()
 }

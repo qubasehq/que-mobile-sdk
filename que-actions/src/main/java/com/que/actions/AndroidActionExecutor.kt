@@ -85,6 +85,12 @@ class AndroidActionExecutor(
                 is Action.SetClipboard -> setClipboard(action.text)
                 is Action.GetClipboard -> getClipboard()
 
+                // Bidirectional communication actions — handled in QueAgent.act() directly.
+                // These branches exist only for exhaustive when-expression compliance.
+                is Action.AskUser -> ActionResult(true, "ask_user handled by agent loop")
+                is Action.Narrate -> ActionResult(true, "narrate handled by agent loop")
+                is Action.Confirm -> ActionResult(true, "confirm handled by agent loop")
+
                 is Action.Custom -> {
                     when {
                         action.name == "finish" -> {
@@ -222,15 +228,17 @@ class AndroidActionExecutor(
         return when (direction) {
             Direction.DOWN -> {
                 // Scroll DOWN means "I want to see what is below" -> Swipe UP (bottom -> top)
-                val startY = (screenHeight * 0.8).toInt()
+                // START FROM 0.5 (middle) instead of 0.8 (bottom) to avoid the keyboard!
+                val startY = (screenHeight * 0.5).toInt()
                 val endY = (startY - pixels).coerceAtLeast(0)
                 val success = controller.scroll(x, startY, x, endY, duration)
                 ActionResult(success, "Scrolled DOWN (swiped up) by $pixels px")
             }
             Direction.UP -> {
                 // Scroll UP means "I want to see what is above" -> Swipe DOWN (top -> bottom)
-                val startY = (screenHeight * 0.2).toInt()
-                val endY = (startY + pixels).coerceAtMost(screenHeight)
+                // START FROM 0.3 instead of 0.2 to give more runway, end lower but safely above keyboard
+                val startY = (screenHeight * 0.3).toInt()
+                val endY = (startY + pixels).coerceAtMost((screenHeight * 0.8).toInt())
                 val success = controller.scroll(x, startY, x, endY, duration)
                 ActionResult(success, "Scrolled UP (swiped down) by $pixels px")
             }
