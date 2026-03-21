@@ -59,6 +59,32 @@ class GeminiClient(
         }
     }
 
+    override suspend fun listModels(): List<com.que.core.service.ModelInfo> {
+        return withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url("https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey")
+                .get()
+                .build()
+
+            val response = client.newCall(request).execute()
+            val bodyString = response.body?.string() ?: ""
+
+            if (!response.isSuccessful) {
+                throw RuntimeException("Gemini API Error (${response.code}): $bodyString")
+            }
+
+            val listResponse = json.decodeFromString<ListModelsResponse>(bodyString)
+            listResponse.models?.map { 
+                com.que.core.service.ModelInfo(
+                    name = it.name.removePrefix("models/"),
+                    displayName = it.displayName ?: it.name,
+                    description = it.description ?: "",
+                    supportedMethods = it.supportedGenerationMethods ?: emptyList()
+                )
+            } ?: emptyList()
+        }
+    }
+
     private suspend fun performRequest(messages: List<Message>): LLMResponse {
         try {
             val payload = buildRequest(messages)
@@ -186,5 +212,16 @@ class GeminiClient(
     data class Candidate(
         val content: Content?,
         val finishReason: String?
+    )
+
+    @Serializable
+    data class ListModelsResponse(val models: List<GeminiModelInfo>?)
+
+    @Serializable
+    data class GeminiModelInfo(
+        val name: String,
+        val displayName: String? = null,
+        val description: String? = null,
+        val supportedGenerationMethods: List<String>? = null
     )
 }

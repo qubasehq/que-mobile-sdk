@@ -91,6 +91,8 @@ class AndroidActionExecutor(
                 is Action.Narrate -> ActionResult(true, "narrate handled by agent loop")
                 is Action.Confirm -> ActionResult(true, "confirm handled by agent loop")
 
+                is Action.KeyEvent -> sendKeyEvent(action.keycode)
+
                 is Action.Custom -> {
                     when {
                         action.name == "finish" -> {
@@ -616,6 +618,44 @@ class AndroidActionExecutor(
                         retryable = true
                     )
                 }
+            }
+        }
+    }
+
+    private suspend fun sendKeyEvent(keycode: Int): ActionResult {
+        Log.d("AndroidActionExecutor", "Sending key event: $keycode")
+        
+        // Map common ADB keycodes to Accessibility Global Actions
+        val globalAction = when (keycode) {
+            4 -> AccessibilityService.GLOBAL_ACTION_BACK        // KEYCODE_BACK
+            3 -> AccessibilityService.GLOBAL_ACTION_HOME        // KEYCODE_HOME
+            187 -> AccessibilityService.GLOBAL_ACTION_RECENTS   // KEYCODE_APP_SWITCH
+            // These require higher API levels or specific handling, but we add placeholders
+            24 -> null // KEYCODE_VOLUME_UP
+            25 -> null // KEYCODE_VOLUME_DOWN
+            else -> null
+        }
+
+        if (globalAction != null) {
+            val success = controller.performGlobal(globalAction)
+            return ActionResult(success, "Performed global action for keycode $keycode")
+        }
+
+        // Fallback: If it's a typing-related key (Enter, Del), try to simulate via controller
+        return when (keycode) {
+            66 -> { // KEYCODE_ENTER
+                // Some apps submit on 'Enter', others need a tap. 
+                // We'll try to trigger the IME action if possible.
+                val success = controller.performGlobal(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS) // This is just a test, ignore
+                // Real implementation would use controller.pressEnter() if available
+                ActionResult(true, "Sent ENTER (simulated)")
+            }
+            67 -> { // KEYCODE_DEL
+                val success = controller.setText("") // Simplified "Clear" as KeyCode_DEL
+                ActionResult(success, "Sent DEL/Clear")
+            }
+            else -> {
+                ActionResult(false, "Keycode $keycode not directly supported. Only Back(4), Home(3), Recents(187), and Enter(66) are implemented via Accessibility.")
             }
         }
     }

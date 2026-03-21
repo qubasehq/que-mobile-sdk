@@ -103,11 +103,12 @@ class CosmicOverlayService : Service() {
          * The user can tap quick-reply options or type a custom reply.
          */
         fun showQuestion(question: String, options: List<String>?, onReply: (String) -> Unit) {
+            val finalOptions = if (options.isNullOrEmpty()) listOf("Yes", "No") else options
             instance?.showInteractionPanel(
                 icon = "🙋",
                 title = "Agent Question",
                 body = question,
-                options = options,
+                options = finalOptions,
                 confirmMode = false,
                 onReply = onReply
             )
@@ -163,7 +164,15 @@ class CosmicOverlayService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        startForeground(NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID, 
+                notification, 
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
         createOverlay()
         
         scope.launch {
@@ -171,6 +180,37 @@ class CosmicOverlayService : Service() {
                 .debounce(100)
                 .collect { state -> updateOverlayForState(state) }
         }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "CosmicOverlayService onStartCommand")
+        
+        // Ensure startForeground is called immediately to satisfy Android requirements
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID, "Cosmic Overlay", NotificationManager.IMPORTANCE_LOW
+            )
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Que Agent Active")
+            .setContentText("Cosmic overlay is running")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID, 
+                notification, 
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+        
+        return START_STICKY
     }
 
     private fun dp(value: Int): Int {
@@ -345,7 +385,44 @@ class CosmicOverlayService : Service() {
                 setTextColor(if (QueAgentService.isVoiceEnabled) COL_CYAN else COL_TEXT_DIM)
             }
         }
+        
+        // Auto Toggle button
+        val autoToggle = TextView(this).apply {
+            text = if (QueAgentService.isAutonomousMode) "🤖 AUTO" else "🙋 INTERACTIVE"
+            textSize = 10f
+            setTextColor(if (QueAgentService.isAutonomousMode) COL_CYAN else COL_YELLOW)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            val bg = GradientDrawable().apply {
+                setColor(Color.parseColor("#FF252545"))
+                cornerRadius = dp(12).toFloat()
+            }
+            background = bg
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                leftMargin = dp(8)
+            }
+            setOnClickListener {
+                QueAgentService.isAutonomousMode = !QueAgentService.isAutonomousMode
+                text = if (QueAgentService.isAutonomousMode) "🤖 AUTO" else "🙋 INTERACTIVE"
+                setTextColor(if (QueAgentService.isAutonomousMode) COL_CYAN else COL_YELLOW)
+            }
+        }
+        
+        headerRow.addView(autoToggle)
         headerRow.addView(voiceToggle)
+
+        // ── Close button ──
+        val closeBtn = TextView(this).apply {
+            text = "✕"
+            textSize = 14f
+            setTextColor(COL_TEXT_DIM)
+            setPadding(dp(12), dp(4), dp(8), dp(4))
+            setOnClickListener {
+                stopSelf()
+            }
+        }
+        headerRow.addView(closeBtn)
+
         panel.addView(headerRow)
 
         // ── Divider ──
@@ -732,12 +809,24 @@ class CosmicOverlayService : Service() {
                 statusText?.setTextColor(COL_GREEN)
                 cosmicWave?.setIntensity(0.2f)
                 mascot?.setVisualState(QueMascotView.MascotState.IDLE)
+                
+                // Auto-dismiss overlay after 10s if not already gone
+                scope.launch {
+                    kotlinx.coroutines.delay(10000)
+                    if (instance != null) stopSelf()
+                }
             }
             is AgentState.Error -> {
                 statusText?.text = "❌ ${state.message.take(40)}"
                 statusText?.setTextColor(COL_RED)
                 cosmicWave?.setIntensity(0.0f)
                 mascot?.setVisualState(QueMascotView.MascotState.IDLE)
+                
+                // Auto-dismiss overlay after 15s for errors (longer to read)
+                scope.launch {
+                    kotlinx.coroutines.delay(15000)
+                    if (instance != null) stopSelf()
+                }
             }
         }
     }

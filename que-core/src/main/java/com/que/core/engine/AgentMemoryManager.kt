@@ -65,11 +65,24 @@ class AgentMemoryManager {
             // Summarize recent history (Last 5 steps)
             if (history.isNotEmpty()) {
                 appendLine("**Recent History (Last 5 Steps):**")
+                
+                val actionsList = mutableListOf<String>()
+                
                 history.takeLast(5).forEach { step ->
                     val actionSummary = step.modelOutput?.actions?.joinToString(", ") { it.javaClass.simpleName } ?: "None"
+                    actionsList.add(actionSummary)
                     val success = step.results.all { it.success }
                     appendLine("Step ${step.step}: $actionSummary → ${if (success) "Success" else "Failed"}")
                 }
+                
+                // Detect spamming the exact same action
+                if (actionsList.size >= 3) {
+                    val lastThree = actionsList.takeLast(3)
+                    if (lastThree.distinct().size == 1 && lastThree.first() != "None") {
+                        appendLine("\n⚠️ CRITICAL WARNING: You have repeated [${lastThree.first()}] 3 times in a row without making progress. DO NOT repeat this action again. Try a different approach or ask the user for help.")
+                    }
+                }
+                
                 appendLine("Learn from these results.")
                 appendLine()
             }

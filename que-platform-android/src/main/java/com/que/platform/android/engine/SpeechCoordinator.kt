@@ -27,7 +27,9 @@ class SpeechCoordinator private constructor(private val context: Context) {
         private var instance: SpeechCoordinator? = null
         
         fun getInstance(context: Context): SpeechCoordinator {
-            return instance ?: synchronized(this) {
+            return instance?.apply {
+                if (!isInitialized) initializeTTS()
+            } ?: synchronized(this) {
                 instance ?: SpeechCoordinator(context.applicationContext).also {
                     instance = it
                 }
@@ -145,6 +147,7 @@ class SpeechCoordinator private constructor(private val context: Context) {
     fun shutdown() {
         tts?.stop()
         tts?.shutdown()
+        tts = null
         isInitialized = false
         Log.d(TAG, "TTS shutdown")
     }

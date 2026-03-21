@@ -59,5 +59,10 @@ data class AgentSettings(
     /**
      * Whether to enable adaptive learning from feedback.
      */
-    val enableAdaptiveLearning: Boolean = true
+    val enableAdaptiveLearning: Boolean = true,
+    
+    /**
+     * Whether the agent should operate autonomously, reducing questions to the user.
+     */
+    val isAutonomousMode: Boolean = true
 )

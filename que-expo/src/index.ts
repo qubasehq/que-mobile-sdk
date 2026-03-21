@@ -42,6 +42,46 @@ export interface ConfirmationEvent {
     actionPreview: string;
 }
 
+export interface TaskRecord {
+    id: number;
+    taskText: string;
+    status: string;
+    startedAt: number;
+    completedAt: number;
+    durationSeconds: number;
+    summary: string;
+    errorReason: string;
+    appsTouched: string;
+    tokenCount: number;
+    stepCount: number;
+}
+
+export interface ActionItem {
+    id: number;
+    taskId: number;
+    timestamp: number;
+    description: string;
+    actionType: string;
+    appName: string;
+    success: boolean;
+}
+
+export interface LocalModelInfo {
+    id: string;
+    name: string;
+    sizeBytes: number;
+    description: string;
+    parameterCount: string;
+    quantization: string;
+}
+
+export interface ModelInfo {
+    name: string;
+    displayName: string;
+    description: string;
+    supportedMethods: string[];
+}
+
 // ─── Native Module ───────────────────────────────
 
 const QueMobileSDK = requireNativeModule('QueMobileSDK');
@@ -59,6 +99,10 @@ export function hasOverlayPermission(): boolean {
     return QueMobileSDK.hasOverlayPermission();
 }
 
+export function hasAudioPermission(): boolean {
+    return QueMobileSDK.hasAudioPermission();
+}
+
 /** Check if all required permissions (accessibility + overlay) are granted */
 export function hasRequiredPermissions(): boolean {
     return QueMobileSDK.hasRequiredPermissions();
@@ -72,6 +116,10 @@ export async function requestAccessibilityPermission(): Promise<void> {
 /** Open the overlay permission settings screen */
 export async function requestOverlayPermission(): Promise<void> {
     return QueMobileSDK.requestOverlayPermission();
+}
+
+export async function requestAudioPermission(): Promise<void> {
+    return QueMobileSDK.requestAudioPermission();
 }
 
 /** Open the accessibility settings screen (shorthand) */
@@ -133,12 +181,63 @@ export async function setVoiceEnabled(enabled: boolean): Promise<void> {
 }
 
 /**
+ * Toggle whether the agent can execute actions autonomously.
+ */
+export async function setAutonomousMode(enabled: boolean): Promise<void> {
+    return QueMobileSDK.setAutonomousMode(enabled);
+}
+
+/**
  * Reply to the agent when it's waiting for user input.
  * Use after receiving an onUserQuestion or onConfirmationRequired event.
  * For confirmations, reply with "yes"/"no"/"confirm"/"deny".
  */
 export async function replyToAgent(reply: string): Promise<void> {
     return QueMobileSDK.replyToAgent(reply);
+}
+
+/**
+ * Start native voice recognition (STT).
+ * Returns a promise that resolves with the recognized text.
+ */
+export async function startVoiceRecognition(): Promise<string> {
+    return QueMobileSDK.startVoiceRecognition();
+}
+
+// ─── Memory & Context ────────────────────────────
+
+export function getTaskHistory(limit: number = 50): TaskRecord[] {
+    return QueMobileSDK.getTaskHistory(limit);
+}
+
+export function getTaskActions(taskId: number): ActionItem[] {
+    return QueMobileSDK.getTaskActions(taskId);
+}
+
+export function clearHistory(): void {
+    QueMobileSDK.clearHistory();
+}
+
+export function resolveContext(fields: string[]): Record<string, string> {
+    return QueMobileSDK.resolveContext(fields);
+}
+
+// ─── Local Model Management ──────────────────────
+
+export function listCloudModels(): Promise<ModelInfo[]> {
+  return QueMobileSDK.listCloudModels();
+}
+
+export function getAvailableModels(): Promise<LocalModelInfo[]> {
+    return QueMobileSDK.getAvailableModels();
+}
+
+export function getDownloadedModels(): LocalModelInfo[] {
+    return QueMobileSDK.getDownloadedModels();
+}
+
+export async function downloadModel(modelId: string): Promise<void> {
+    return QueMobileSDK.downloadModel(modelId);
 }
 
 // ─── Events ──────────────────────────────────────
@@ -177,9 +276,11 @@ const QueSDK = {
     // Permissions
     hasAccessibilityPermission,
     hasOverlayPermission,
+    hasAudioPermission,
     hasRequiredPermissions,
     requestAccessibilityPermission,
     requestOverlayPermission,
+    requestAudioPermission,
     requestPermissions,
     openAccessibilitySettings,
     openOverlaySettings,
@@ -195,7 +296,22 @@ const QueSDK = {
     getAgentState,
 
     // Bidirectional Communication
+    setVoiceEnabled,
+    setAutonomousMode,
     replyToAgent,
+    startVoiceRecognition,
+
+    // Memory & Context
+    getTaskHistory,
+    getTaskActions,
+    clearHistory,
+    resolveContext,
+
+    // Local Models
+    listCloudModels,
+    getAvailableModels,
+    getDownloadedModels,
+    downloadModel,
 
     // Events
     addStateListener,

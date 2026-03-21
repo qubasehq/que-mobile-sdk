@@ -121,6 +121,12 @@ sealed class Action {
     @Serializable
     data class Custom(val name: String, val params: Map<String, String>) : Action()
 
+    // Key Events
+    @Serializable
+    data class KeyEvent(val keycode: Int) : Action() {
+        override fun toHumanReadableString() = "Sending key event: $keycode"
+    }
+
     // ===== DATA-DRIVEN ACTION REGISTRY (Blurr-style) =====
     companion object {
 
@@ -305,7 +311,36 @@ sealed class Action {
             "done" to Spec("done", "Mark the task as complete.", listOf(
                 ParamSpec("success", Boolean::class, "Whether the task succeeded."),
                 ParamSpec("text", String::class, "Final message for the user.")
-            )) { args -> Custom("finish", mapOf("success" to args["success"].toString(), "text" to (args["text"] as? String ?: ""))) }
+            )) { args -> Custom("finish", mapOf("success" to args["success"].toString(), "text" to (args["text"] as? String ?: ""))) },
+
+            // ADB Key Events
+            "adb_keyevent" to Spec("adb_keyevent", "Send a low-level Android key event (e.g. 66 for ENTER, 4 for BACK). Use for precise control or fallback when standard navigation fails.", listOf(
+                ParamSpec("keycode", Int::class, "The numeric Android keycode to send.")
+            )) { args -> KeyEvent(args["keycode"] as Int) },
+
+            // Smart Intents
+            "dial" to Spec("dial", "Open the phone dialer with a pre-filled number. Fast alternative to manual typing in dialer apps.", listOf(
+                ParamSpec("phone_number", String::class, "The number to dial.")
+            )) { args -> LaunchIntent("dial", mapOf("number" to (args["phone_number"] as String))) },
+
+            "open_url" to Spec("open_url", "Open a specific URL in the browser. Faster and more reliable than manual navigation.", listOf(
+                ParamSpec("url", String::class, "The full URL to open.")
+            )) { args -> LaunchIntent("view_url", mapOf("url" to (args["url"] as String))) },
+
+            "share" to Spec("share", "Launch the system share sheet with specific text.", listOf(
+                ParamSpec("text", String::class, "The content to share.")
+            )) { args -> LaunchIntent("share", mapOf("text" to (args["text"] as String))) },
+
+            "send_email" to Spec("send_email", "Open the email app with pre-filled content.", listOf(
+                ParamSpec("to", String::class, "Recipient email address."),
+                ParamSpec("subject", String::class, "Email subject.", false),
+                ParamSpec("body", String::class, "Email body content.", false)
+            )) { args -> 
+                val params = mutableMapOf("to" to (args["to"] as String))
+                (args["subject"] as? String)?.let { params["subject"] = it }
+                (args["body"] as? String)?.let { params["body"] = it }
+                LaunchIntent("email", params)
+            }
         )
 
         /** Get a spec by action name */
@@ -333,6 +368,7 @@ enum class VolumeStream {
 data class ActionResult(
     val success: Boolean,
     val message: String = "",
+    val actionName: String = "",
     val isDone: Boolean = false,  // Indicates task completion
     val data: Map<String, String> = emptyMap(),  // Additional result data
     val retryable: Boolean = false,
@@ -429,6 +465,11 @@ object ActionParser {
                 "sleep", "delay", "pause" -> {
                     val duration = actionObj["duration"]?.jsonPrimitive?.longOrNull ?: 2000L
                     Action.Wait(duration)
+                }
+                "progress", "found", "warning", "info" -> {
+                    // HEALING: LLM often sends the narration type as the top-level gesture
+                    val message = actionObj["message"]?.jsonPrimitive?.contentOrNull ?: ""
+                    Action.Narrate(message, type)
                 }
                 "stop", "exit" -> Action.Custom("finish", emptyMap())
                 else -> {

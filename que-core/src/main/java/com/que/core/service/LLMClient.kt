@@ -13,7 +13,16 @@ interface LLMClient {
      * @return The LLM's response.
      */
     suspend fun generate(messages: List<Message>): LLMResponse
+    suspend fun listModels(): List<ModelInfo>
 }
+
+@Serializable
+data class ModelInfo(
+    val name: String,
+    val displayName: String,
+    val description: String,
+    val supportedMethods: List<String>
+)
 
 @Serializable
 data class Message(

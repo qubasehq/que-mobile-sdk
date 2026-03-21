@@ -90,7 +90,8 @@ class QueAgent(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + kotlinx.coroutines.SupervisorJob()),
     private val speech: SpeechService? = null,
     private val contextualMemory: ContextualMemory = InMemoryMemoryStore(),
-    private val guidance: UserGuidance? = null
+    private val guidance: UserGuidance? = null,
+    private val historyTracker: AgentHistoryTracker? = null
 ) : Agent {
 
     private val TAG = "QueAgent"
@@ -139,6 +140,8 @@ class QueAgent(
     private val recoverySystem: IntelligentRecoverySystem = IntelligentRecoverySystem(contextualMemory)
     private var consecutiveFailures: Int = 0
 
+    private var currentTaskId: Long = 0L
+
     // NEW: Adaptive Learning
     private val learningSystem: AdaptiveLearningSystem? = if (settings.enableAdaptiveLearning) {
         AdaptiveLearningSystem(contextualMemory, llm)
@@ -184,18 +187,30 @@ class QueAgent(
                 currentPlanStepIndex = 0
                 
                 // Initialize memory with task
-                val systemPrompt = promptBuilder.buildSystemPrompt()
+                val systemPrompt = promptBuilder.buildSystemPrompt(settings.isAutonomousMode)
                 // Update system prompt with fresh builder (to get new multi-action instructions)
                 memory.addTask(instruction, systemPrompt)
                 stuckDetector.clear()
                 AgentLogger.d(TAG, "Starting step ${loopState.nSteps}")
                 
                 loop(instruction)
+                
+                if (_state.value is AgentState.Error) {
+                    historyTracker?.failTask(currentTaskId, (_state.value as AgentState.Error).message)
+                } else {
+                    val finalSummary = loopState.lastModelOutput?.thought ?: "Task finished in ${loopState.nSteps} steps"
+                    historyTracker?.completeTask(currentTaskId, finalSummary, loopState.nSteps * 150)
+                    historyTracker?.extractAndLearn(currentTaskId)
+                }
+                
             } catch (e: kotlinx.coroutines.CancellationException) {
                 AgentLogger.i(TAG, "Task cancelled")
+                historyTracker?.cancelTask(currentTaskId)
                 _state.value = AgentState.Idle
             } catch (e: Exception) {
                 AgentLogger.e(TAG, "Critical error in agent loop", e)
+                historyTracker?.failTask(currentTaskId, e.message ?: "Agent crashed")
+                _events.emit(AgentEvent.Narration("Agent crashed: ${e.message}", "error"))
                 _state.value = AgentState.Error("Agent crashed", e)
                 if (settings.enableSpeech) {
                     speech?.speak("I crashed. Sorry.")
@@ -212,6 +227,7 @@ class QueAgent(
         loopState.stopped = true
         isPaused = false
         _state.value = AgentState.Idle
+        historyTracker?.cancelTask(currentTaskId)
     }
     
     override fun pause() {
@@ -254,6 +270,8 @@ class QueAgent(
         log("=== AGENT LOOP STARTING ===", "I")
         log("Task: $task", "I")
         log("Max Steps: ${settings.maxSteps}", "I")
+        
+        currentTaskId = historyTracker?.startTask(task) ?: 0L
         
         while (!loopState.stopped && loopState.nSteps < settings.maxSteps) {
             // Check for pause state
@@ -417,7 +435,12 @@ class QueAgent(
                     continue
                 }
                 
-                return parseAgentOutput(responseText)
+                val parsed = parseAgentOutput(responseText)
+                if (parsed == null) {
+                    attempts++
+                    continue
+                }
+                return parsed
             } catch (e: Exception) {
                 log("LLM generation attempt ${attempts + 1} failed: ${e.message}", "W")
                 attempts++
@@ -559,7 +582,8 @@ class QueAgent(
         val screen = perception.capture()
 
         // Check for stuck state
-        stuckDetector.recordState(screen)
+        val lastActionName = loopState.lastResults.lastOrNull()?.actionName ?: "None"
+        stuckDetector.recordState(screen, lastActionName)
         if (stuckDetector.isStuck()) {
             log("⚠️ Agent appears stuck in the same state for too long!", "W")
             val recovery = stuckDetector.suggestRecovery(screen)
@@ -730,7 +754,7 @@ class QueAgent(
                     // Inject reply into agent memory
                     memory.addCorrectionNote("User answered your question '${action.question}' with: $reply")
                     
-                    actionResults.add(ActionResult(success = true, message = "User replied: $reply", data = mapOf("reply" to reply)))
+                    actionResults.add(ActionResult(success = true, message = "User replied: $reply", actionName = action.javaClass.simpleName, data = mapOf("reply" to reply)))
                     _state.value = AgentState.Thinking("Processing user reply")
                     continue // Skip normal execution, go to next action
                 }
@@ -744,7 +768,7 @@ class QueAgent(
                         speech?.speak(action.message)
                     }
                     
-                    actionResults.add(ActionResult(success = true, message = "Narrated: ${action.message}"))
+                    actionResults.add(ActionResult(success = true, message = "Narrated: ${action.message}", actionName = action.javaClass.simpleName))
                     continue // Non-blocking, just emit and continue
                 }
                 
@@ -764,20 +788,35 @@ class QueAgent(
                     val reply = userReplyChannel.receive()
                     log("▶️ User confirmation reply: $reply", "I")
                     
-                    val approved = reply.lowercase().let { 
-                        it == "yes" || it == "confirm" || it == "ok" || it == "approve" || it == "go ahead" || it == "proceed"
+                    val evalMessages = listOf(
+                        com.que.core.service.Message(
+                            com.que.core.service.Role.SYSTEM, 
+                            "You are a strict boolean classifier. The user is responding to an approval request for an action: '${action.summary}'. Analyze their response and determine if they are approving or denying. Reply with exactly 'TRUE' if they approved, 'FALSE' if they denied, or 'FALSE' if it is ambiguous."
+                        ),
+                        com.que.core.service.Message(
+                            com.que.core.service.Role.USER,
+                            "User reply: $reply"
+                        )
+                    )
+                    
+                    val evalResponse = try {
+                        llm.generate(evalMessages).text.trim().uppercase()
+                    } catch (e: Exception) {
+                        "FALSE" // Default to safe denial on error
                     }
+                    
+                    val approved = evalResponse.contains("TRUE")
                     
                     if (!approved) {
                         log("🚫 User denied action. Aborting this action chain.", "W")
                         memory.addCorrectionNote("User DENIED your proposed action: '${action.summary}'. They said: '$reply'. Respect their decision and adjust your approach.")
-                        actionResults.add(ActionResult(success = false, message = "User denied: $reply"))
+                        actionResults.add(ActionResult(success = false, message = "User denied: $reply", actionName = action.javaClass.simpleName))
                         _state.value = AgentState.Thinking("User denied action, re-planning")
                         break // Stop executing remaining actions in this step
                     }
                     
                     memory.addCorrectionNote("User APPROVED your proposed action: '${action.summary}'.")
-                    actionResults.add(ActionResult(success = true, message = "User approved"))
+                    actionResults.add(ActionResult(success = true, message = "User approved", actionName = action.javaClass.simpleName))
                     _state.value = AgentState.Thinking("User approved, continuing")
                     continue
                 }
@@ -785,12 +824,22 @@ class QueAgent(
                 else -> { /* Normal action — fall through to standard execution below */ }
             }
 
-            _state.value = AgentState.Acting("${action.toHumanReadableString()} (${index + 1}/${agentOutput.actions.size})")
+            _state.value = AgentState.Acting(action.toHumanReadableString())
             log("Exec: $action", "D")
             
             // Execute with Recovery
             val result = executeActionWithRecovery(action, screen)
             actionResults.add(result)
+            
+            historyTracker?.recordAction(
+                taskId = currentTaskId,
+                timestamp = System.currentTimeMillis(),
+                description = result.message,
+                actionType = action.javaClass.simpleName,
+                appName = screen.activityName,
+                success = result.success,
+                errorDetail = if (!result.success) result.message else ""
+            )
 
             if (result.success) {
                 consecutiveFailures = 0

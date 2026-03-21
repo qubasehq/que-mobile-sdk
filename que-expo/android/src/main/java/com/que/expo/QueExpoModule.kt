@@ -11,6 +11,53 @@ import android.provider.Settings
 import android.util.Log
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.Promise
+
+import com.que.platform.android.db.TaskHistoryRepository
+import com.que.platform.android.db.ContextResolver
+import com.que.platform.android.llm.LocalModelManager
+import com.que.platform.android.llm.LocalModelInfo
+import kotlinx.coroutines.launch
+
+private fun com.que.platform.android.db.entities.TaskRecord.toMap() = mapOf(
+    "id" to id.toDouble(),
+    "taskText" to taskText,
+    "status" to status,
+    "startedAt" to startedAt.toDouble(),
+    "completedAt" to completedAt.toDouble(),
+    "durationSeconds" to durationSeconds,
+    "summary" to summary,
+    "errorReason" to errorReason,
+    "appsTouched" to appsTouched,
+    "tokenCount" to tokenCount.toDouble(),
+    "stepCount" to stepCount.toDouble()
+)
+
+private fun com.que.platform.android.db.entities.ActionItem.toMap() = mapOf(
+    "id" to id.toDouble(),
+    "taskId" to taskId.toDouble(),
+    "timestamp" to timestamp.toDouble(),
+    "description" to description,
+    "actionType" to actionType,
+    "appName" to appName,
+    "success" to success
+)
+
+private fun LocalModelInfo.toMap() = mapOf(
+    "id" to id,
+    "name" to name,
+    "sizeBytes" to sizeBytes.toDouble(),
+    "description" to description,
+    "parameterCount" to parameterCount,
+    "quantization" to quantization
+)
+
+private fun com.que.core.service.ModelInfo.toMap() = mapOf(
+    "name" to name,
+    "displayName" to displayName,
+    "description" to description,
+    "supportedMethods" to supportedMethods
+)
 
 class QueExpoModule : Module() {
 
@@ -43,7 +90,13 @@ class QueExpoModule : Module() {
         Function("hasRequiredPermissions") {
             val ctx = appContext.reactContext ?: return@Function false
             PermissionManager.isAccessibilityServiceEnabled(ctx, QueAccessibilityService::class.java) &&
-                PermissionManager.hasOverlayPermission(ctx)
+                PermissionManager.hasOverlayPermission(ctx) &&
+                PermissionManager.hasAudioPermission(ctx)
+        }
+
+        Function("hasAudioPermission") {
+            val ctx = appContext.reactContext ?: return@Function false
+            PermissionManager.hasAudioPermission(ctx)
         }
 
         AsyncFunction("requestAccessibilityPermission") {
@@ -55,6 +108,12 @@ class QueExpoModule : Module() {
         AsyncFunction("requestOverlayPermission") {
             val ctx = appContext.reactContext ?: return@AsyncFunction null
             PermissionManager.requestOverlayPermission(ctx)
+            null
+        }
+
+        AsyncFunction("requestAudioPermission") {
+            val activity = appContext.currentActivity ?: return@AsyncFunction null
+            PermissionManager.requestAudioPermission(activity, 1001)
             null
         }
 
@@ -197,10 +256,127 @@ class QueExpoModule : Module() {
             null
         }
 
+        AsyncFunction("setAutonomousMode") { enabled: Boolean ->
+            Log.d(TAG, "Setting autonomous mode: $enabled")
+            QueAgentService.isAutonomousMode = enabled
+            null
+        }
+
         AsyncFunction("replyToAgent") { reply: String ->
             Log.d(TAG, "User reply to agent: $reply")
             QueAgentService.replyToAgent(reply)
             null
+        }
+
+        AsyncFunction("startVoiceRecognition") { promise: Promise ->
+            val ctx = appContext.reactContext ?: run {
+                promise.reject("ERR_CONTEXT", "React context not available", null)
+                return@AsyncFunction
+            }
+            
+            val sttManager = com.que.platform.android.util.STTManager(ctx)
+            
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                try {
+                    sttManager.startListening().collect { transcript ->
+                        promise.resolve(transcript)
+                    }
+                } catch (e: Exception) {
+                    promise.reject("ERR_STT", e.message, e)
+                }
+            }
+        }
+
+        // ─── Memory & Context ────────────────────
+
+        Function("getTaskHistory") { limit: Int ->
+            val ctx = appContext.reactContext ?: return@Function emptyList<Map<String, Any>>()
+            try {
+                val repo = TaskHistoryRepository(QueAgentService.boxStore)
+                repo.getHistory(limit).map { it.toMap() }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to get history", e)
+                emptyList<Map<String, Any>>()
+            }
+        }
+
+        Function("getTaskActions") { taskId: Double ->
+            val ctx = appContext.reactContext ?: return@Function emptyList<Map<String, Any>>()
+            try {
+                val repo = TaskHistoryRepository(QueAgentService.boxStore)
+                repo.getTaskActions(taskId.toLong()).map { it.toMap() }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to get specific task actions", e)
+                emptyList<Map<String, Any>>()
+            }
+        }
+
+        Function("clearHistory") {
+            try {
+                val repo = TaskHistoryRepository(QueAgentService.boxStore)
+                repo.clearHistory()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to clear history", e)
+            }
+        }
+
+        Function("resolveContext") { fields: List<String> ->
+            try {
+                val resolver = ContextResolver(QueAgentService.boxStore)
+                resolver.resolve(*fields.toTypedArray())
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to resolve context", e)
+                emptyMap<String, String>()
+            }
+        }
+
+        AsyncFunction("listCloudModels") { promise: Promise ->
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                try {
+                    val models = QueAgentService.listCloudModels().map { it.toMap() }
+                    promise.resolve(models)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to list cloud models", e)
+                    promise.resolve(emptyList<Map<String, Any>>())
+                }
+            }
+        }
+
+        // ─── Local Model Management ──────────────
+
+        Function("getAvailableModels") {
+            try {
+                appContext.reactContext?.let { ctx ->
+                    LocalModelManager(ctx).getAvailableModels().map { it.toMap() }
+                } ?: emptyList<Map<String, Any>>()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to get available models", e)
+                emptyList<Map<String, Any>>()
+            }
+        }
+
+        Function("getDownloadedModels") {
+            try {
+                appContext.reactContext?.let { ctx ->
+                    LocalModelManager(ctx).getDownloadedModels().map { it.toMap() }
+                } ?: emptyList<Map<String, Any>>()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to get downloaded models", e)
+                emptyList<Map<String, Any>>()
+            }
+        }
+
+        AsyncFunction("downloadModel") { modelId: String ->
+            val ctx = appContext.reactContext ?: return@AsyncFunction null
+            try {
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                    LocalModelManager(ctx).downloadModel(modelId)
+                }
+                null
+            } catch (e: Exception) {
+                Log.e(TAG, "Download trigger failed", e)
+                null
+            }
         }
 
         Function("getAgentState") {

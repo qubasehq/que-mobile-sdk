@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    kotlin("kapt")
 }
 
 group = "com.que.platform"
@@ -45,6 +46,10 @@ android {
     }
 }
 
+kapt {
+    correctErrorTypes = true
+}
+
 dependencies {
     implementation(project(":que-core"))
     implementation(project(":que-vision"))
@@ -55,4 +60,15 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("ai.picovoice:porcupine-android:4.0.0")
+    
+    // Local LLM: llama.cpp JNI wrapper for on-device GGUF inference
+    implementation("de.kherud:llama:4.2.0")
+    // OkHttp for downloading models from HuggingFace
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    
+    // ObjectBox
+    api("io.objectbox:objectbox-android:4.0.3")
+    api("io.objectbox:objectbox-kotlin:4.0.3")
+    api("io.objectbox:objectbox-java:4.0.3")
+    kapt("io.objectbox:objectbox-processor:4.0.3")
 }

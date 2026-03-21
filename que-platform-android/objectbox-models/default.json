@@ -1,0 +1,182 @@
+{
+  "_note1": "KEEP THIS FILE! Check it into a version control system (VCS) like git.",
+  "_note2": "ObjectBox manages crucial IDs for your object model. See docs for details.",
+  "_note3": "If you have VCS merge conflicts, you must resolve them according to ObjectBox docs.",
+  "entities": [
+    {
+      "id": "1:6459043793308241412",
+      "lastPropertyId": "8:8794543180636388733",
+      "name": "ActionItem",
+      "properties": [
+        {
+          "id": "1:3350361619531034479",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:2243093208697044971",
+          "name": "taskId",
+          "type": 6
+        },
+        {
+          "id": "3:503906742996076477",
+          "name": "timestamp",
+          "type": 6
+        },
+        {
+          "id": "4:7118672900183650315",
+          "name": "description",
+          "type": 9
+        },
+        {
+          "id": "5:1682251598983861091",
+          "name": "actionType",
+          "type": 9
+        },
+        {
+          "id": "6:6314105838064145474",
+          "name": "appName",
+          "type": 9
+        },
+        {
+          "id": "7:2544348488746911018",
+          "name": "success",
+          "type": 1
+        },
+        {
+          "id": "8:8794543180636388733",
+          "name": "errorDetail",
+          "type": 9
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "2:6575222039827918927",
+      "lastPropertyId": "11:4940555054785820546",
+      "name": "TaskRecord",
+      "properties": [
+        {
+          "id": "1:4986973616403583116",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:1590766128709657183",
+          "name": "taskText",
+          "type": 9
+        },
+        {
+          "id": "3:5513485102088069193",
+          "name": "status",
+          "type": 9
+        },
+        {
+          "id": "4:3308565597576703685",
+          "name": "startedAt",
+          "type": 6
+        },
+        {
+          "id": "5:581603722473934502",
+          "name": "completedAt",
+          "type": 6
+        },
+        {
+          "id": "6:4121621288509770318",
+          "name": "durationSeconds",
+          "type": 5
+        },
+        {
+          "id": "7:3906616669197244348",
+          "name": "summary",
+          "type": 9
+        },
+        {
+          "id": "8:6884254750150300280",
+          "name": "errorReason",
+          "type": 9
+        },
+        {
+          "id": "9:4330598971784479690",
+          "name": "appsTouched",
+          "type": 9
+        },
+        {
+          "id": "10:1337889690358076883",
+          "name": "tokenCount",
+          "type": 5
+        },
+        {
+          "id": "11:4940555054785820546",
+          "name": "stepCount",
+          "type": 5
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "3:7749584913491163343",
+      "lastPropertyId": "8:3162333074676778054",
+      "name": "UserMemory",
+      "properties": [
+        {
+          "id": "1:7970814349363257061",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:9128505588807553504",
+          "name": "fieldPath",
+          "type": 9
+        },
+        {
+          "id": "3:7658521747753192436",
+          "name": "value",
+          "type": 9
+        },
+        {
+          "id": "4:613408377020257395",
+          "name": "source",
+          "type": 9
+        },
+        {
+          "id": "5:7013653714070126415",
+          "name": "confidence",
+          "type": 7
+        },
+        {
+          "id": "6:2086505344427104331",
+          "name": "cachedAt",
+          "type": 6
+        },
+        {
+          "id": "7:7601299008750932839",
+          "name": "ttlSeconds",
+          "type": 5
+        },
+        {
+          "id": "8:3162333074676778054",
+          "name": "embedding",
+          "indexId": "1:4354405730423818782",
+          "type": 28,
+          "flags": 8
+        }
+      ],
+      "relations": []
+    }
+  ],
+  "lastEntityId": "3:7749584913491163343",
+  "lastIndexId": "1:4354405730423818782",
+  "lastRelationId": "0:0",
+  "lastSequenceId": "0:0",
+  "modelVersion": 5,
+  "modelVersionParserMinimum": 5,
+  "retiredEntityUids": [],
+  "retiredIndexUids": [],
+  "retiredPropertyUids": [],
+  "retiredRelationUids": [],
+  "version": 1
+}

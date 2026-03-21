@@ -106,6 +106,16 @@ class QueAgentService : Service() {
         @Volatile
         var isVoiceEnabled: Boolean = true
             
+        @Volatile
+        var isAutonomousMode: Boolean = true
+
+        lateinit var boxStore: io.objectbox.BoxStore
+            private set
+            
+        @Volatile
+        private var isDbInitialized: Boolean = false
+
+            
         // Securely hold API key in memory to avoid passing via Intent extras (which can be dumped)
         private var sessionApiKey: String? = null
 
@@ -128,6 +138,11 @@ class QueAgentService : Service() {
 
         fun setApiKey(apiKey: String) {
             sessionApiKey = apiKey
+        }
+
+        suspend fun listCloudModels(): List<com.que.core.service.ModelInfo> {
+            val key = sessionApiKey ?: return emptyList()
+            return com.que.llm.GeminiClient(key).listModels()
         }
 
         /**
@@ -210,6 +225,15 @@ class QueAgentService : Service() {
         super.onCreate()
         Log.d(TAG, "onCreate: Service is being created.")
         
+        // Initialize ObjectBox
+        if (!isDbInitialized) {
+            boxStore = com.que.platform.android.db.entities.MyObjectBox.builder()
+                .androidContext(this.applicationContext)
+                .build()
+            isDbInitialized = true
+            Log.d(TAG, "✓ ObjectBox initialized")
+        }
+
         // Initialize notification manager
         notificationManager = AgentNotificationManager(this)
         
@@ -224,6 +248,24 @@ class QueAgentService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand received.")
+
+        // Unconditionally satisfy Android's strict foreground start rules to prevent ForegroundServiceDidNotStartInTimeException
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            } else 0
+            
+            startForeground(
+                AgentNotificationManager.NOTIFICATION_ID, 
+                notificationManager.buildForegroundNotification(currentTask?.let { "Running: $it" } ?: "Agent is standing by"),
+                serviceType
+            )
+        } else {
+            startForeground(
+                AgentNotificationManager.NOTIFICATION_ID, 
+                notificationManager.buildForegroundNotification(currentTask?.let { "Running: $it" } ?: "Agent is standing by")
+            )
+        }
 
         // Handle service actions
         when (intent?.action) {
@@ -271,10 +313,17 @@ class QueAgentService : Service() {
         this.maxSteps = maxStepsFromIntent ?: 30
         this.enablePredictivePlanning = enablePredictivePlanningFromIntent
 
-        // Add new task to the queue (Deduplicate)
+        // Add new task to the queue (Deduplicate only if NOT currently running or NOT the exact current task being processed)
+        // Actually, we should allow adding if it's a "Retry" - but how to distinguish?
+        // Simple fix: if task is already in queue, ignore. If it's the current task, only allow if the agent has finished.
         if (task.isNotBlank()) {
-            if (task == currentTask || taskQueue.contains(task)) {
-                 Log.d(TAG, "Task matches current or queued task. Ignoring duplicate: $task")
+            val isAlreadyQueued = taskQueue.contains(task)
+            val isCurrentlyRunning = isRunning && task == currentTask
+            
+            if (isAlreadyQueued) {
+                 Log.d(TAG, "Task already in queue: $task")
+            } else if (isCurrentlyRunning) {
+                 Log.d(TAG, "Task matches current ACTIVE task. Ignoring duplicate: $task")
             } else {
                  Log.d(TAG, "Adding task to queue: $task")
                  taskQueue.add(task)
@@ -284,65 +333,27 @@ class QueAgentService : Service() {
         // If the agent is not already processing tasks, start the loop
         if (!isRunning && taskQueue.isNotEmpty()) {
             Log.i(TAG, "Agent not running, starting processing loop.")
+            isRunning = true 
+
             serviceScope.launch {
                 processTaskQueue()
             }
-        } else {
-            if (isRunning) Log.d(TAG, "Task added to queue. Processor is already running.")
-            else Log.d(TAG, "Service started with no task, waiting for tasks.")
         }
-
         return START_STICKY
     }
 
     private suspend fun processTaskQueue() {
-        if (isRunning) {
-            Log.d(TAG, "processTaskQueue called but already running.")
-            return
-        }
-        isRunning = true
-
         Log.i(TAG, "=== STARTING TASK PROCESSING LOOP ===")
-        startForeground(AgentNotificationManager.NOTIFICATION_ID, notificationManager.buildForegroundNotification("Agent is starting..."))
-
-            // Forward agent state to overlay service - START IT IMMEDIATELY
-            serviceScope.launch {
-                // ALWAYS Start cosmic overlay service for visual feedback (logs/status)
-                try {
-                    val overlayIntent = Intent(this@QueAgentService, CosmicOverlayService::class.java)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(overlayIntent)
-                    } else {
-                        startService(overlayIntent)
-                    }
-                    Log.d(TAG, "✓ Started CosmicOverlayService for feedback")
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Failed to start cosmic overlay", e)
-                }
-
-                val accessibilityService = com.que.core.registry.ServiceManager.getService<QueAccessibilityService>()
-                // Also trigger particle effects if available (for fun)
-                if (accessibilityService != null) {
-                    accessibilityService.showCosmicOverlay()
-                }
-                
-                // Show initial status
-                CosmicOverlayService.addLog("[SYSTEM] Starting Agent...")
-                CosmicOverlayService.updateState(com.que.core.model.AgentState.Thinking())
-            }
-
 
         // Initialize agent if not already done
         if (!::agent.isInitialized) {
             try {
                 Log.d(TAG, "Agent not initialized, initializing now...")
-                CosmicOverlayService.addLog("[SYSTEM] Initializing AI Brain...")
                 initializeAgent()
                 attachStateMonitoring()
                 Log.i(TAG, "✅ Agent initialized successfully")
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Failed to initialize agent", e)
-                CosmicOverlayService.addLog("[ERROR] Failed to initialize agent: ${e.message}")
                 stopSelf()
                 return
             }
@@ -351,6 +362,30 @@ class QueAgentService : Service() {
         while (taskQueue.isNotEmpty()) {
             val task = taskQueue.poll() ?: continue
             currentTask = task
+
+            // ALWAYS Start/Restart cosmic overlay service for each task
+            // This ensures it reappears even if manually closed between tasks
+            serviceScope.launch {
+                try {
+                    val overlayIntent = Intent(this@QueAgentService, CosmicOverlayService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(overlayIntent)
+                    } else {
+                        startService(overlayIntent)
+                    }
+                    Log.d(TAG, "✓ Ensured CosmicOverlayService is running for task: $task")
+                    
+                    val accessibilityService = com.que.core.registry.ServiceManager.getService<QueAccessibilityService>()
+                    if (accessibilityService != null) {
+                        accessibilityService.showCosmicOverlay()
+                    }
+                    
+                    CosmicOverlayService.addLog("[TASK] Starting: $task")
+                    CosmicOverlayService.updateState(com.que.core.model.AgentState.Thinking())
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Failed to start cosmic overlay", e)
+                }
+            }
 
             Log.i(TAG, "=== EXECUTING TASK ===")
             Log.i(TAG, "Task: $task")
@@ -411,7 +446,8 @@ class QueAgentService : Service() {
             includeScreenshots = true,
             retryFailedActions = true,
             enableAdaptiveLearning = true,
-            enablePredictivePlanning = this.enablePredictivePlanning
+            enablePredictivePlanning = this.enablePredictivePlanning,
+            isAutonomousMode = QueAgentService.isAutonomousMode
         )
         Log.d(TAG, "✓ Agent settings created")
         
@@ -444,6 +480,26 @@ class QueAgentService : Service() {
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         guidance = AndroidUserGuidance(this, windowManager)
         
+        val profileLearner = try { 
+            Log.d(TAG, "Creating profile learner...")
+            com.que.platform.android.db.ProfileLearner(boxStore) 
+        } catch(e: Exception) { 
+            Log.e(TAG, "Failed to create profile learner", e)
+            null 
+        }
+        
+        val historyTracker = try { 
+            Log.d(TAG, "Creating history tracker with boxStore: $boxStore")
+            com.que.platform.android.db.TaskHistoryRepository(boxStore, profileLearner) 
+        } catch(e: Exception) { 
+            Log.e(TAG, "Failed to create history tracker", e)
+            null 
+        }
+        
+        if (historyTracker == null) {
+            Log.e(TAG, "CRITICAL: History tracker is null! Database might be corrupt or inaccessible.")
+        }
+        
         agent = QueAgent(
             context = this, 
             perception = perception, 
@@ -452,7 +508,8 @@ class QueAgentService : Service() {
             fileSystem = fileSystem, 
             settings = settings, 
             speech = speechService,
-            guidance = guidance
+            guidance = guidance,
+            historyTracker = historyTracker
         )
         activeAgentRef = WeakReference(agent)
         Log.d(TAG, "✓ QueAgent instance created")

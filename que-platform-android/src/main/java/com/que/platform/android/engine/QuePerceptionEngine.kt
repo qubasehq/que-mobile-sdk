@@ -107,11 +107,24 @@ class QuePerceptionEngine(
                 scrollBelow,
                 newIds.size
             )
+            
+            // Resolve human-readable app name from package
+            val appLabel = try {
+                val pkg = activity?.split("/")?.firstOrNull()
+                if (pkg != null) {
+                    val info = context.packageManager.getApplicationInfo(pkg, 0)
+                    context.packageManager.getApplicationLabel(info).toString()
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                null
+            }
 
             // Create final snapshot with all enhancements
             val finalSnapshot = snapshot.copy(
                 simplifiedDescription = enhancedDescription,
-                activityName = activity ?: "Unknown",
+                activityName = if (appLabel != null) "$appLabel ($activity)" else (activity ?: "Unknown"),
                 screenshot = screenshotBytes,
                 scrollablePixelsAbove = scrollAbove,
                 scrollablePixelsBelow = scrollBelow,
