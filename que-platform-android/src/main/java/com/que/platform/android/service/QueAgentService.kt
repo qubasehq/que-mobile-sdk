@@ -80,6 +80,7 @@ class QueAgentService : Service() {
         private const val ACTION_STOP_SERVICE = "com.que.platform.android.ACTION_STOP_SERVICE"
         private const val ACTION_PAUSE_SERVICE = "com.que.platform.android.ACTION_PAUSE_SERVICE"
         private const val ACTION_RESUME_SERVICE = "com.que.platform.android.ACTION_RESUME_SERVICE"
+        const val ACTION_VOICE_ASSIST = "com.que.platform.android.ACTION_VOICE_ASSIST"
 
         private const val EXTRA_TASK = "com.que.platform.android.EXTRA_TASK"
         private const val EXTRA_API_KEY = "com.que.platform.android.EXTRA_API_KEY"
@@ -103,9 +104,7 @@ class QueAgentService : Service() {
         var currentStateName: String = "Idle"
             private set
             
-        @Volatile
-        var isVoiceEnabled: Boolean = true
-            
+        @Volatile var isVoiceEnabled = true // Enabled by default for native TTS
         @Volatile
         var isAutonomousMode: Boolean = true
 
@@ -290,6 +289,17 @@ class QueAgentService : Service() {
                     agent.resume()
                 }
                 notificationManager.updateStatus("Resumed")
+                return START_STICKY
+            }
+            ACTION_VOICE_ASSIST -> {
+                Log.i(TAG, "Received VOICE ASSIST action (Power button long-press)")
+                // Notify Expo bridge
+                agentEventListener?.invoke("onAssistActivated", mapOf())
+                
+                // If we're not already running, play an acknowledgment sound or speak
+                if (!isRunning) {
+                    speechCoordinator.speakToUser("I'm listening.")
+                }
                 return START_STICKY
             }
         }
@@ -558,7 +568,7 @@ class QueAgentService : Service() {
                         CosmicOverlayService.addLog("[ACTING] ${state.actionDescription}")
                         notificationManager.updateStatus("Acting: ${state.actionDescription.take(20)}...")
                         notifyStateChange("Acting", state.actionDescription)
-                        if (isVoiceEnabled) speechCoordinator.speakToUser(state.actionDescription)
+                        speechCoordinator.speakToUser(state.actionDescription)
                     }
                     is com.que.core.model.AgentState.WaitingForUser -> {
                         CosmicOverlayService.addLog("[WAITING] ${state.reason}: ${state.question}")
@@ -576,7 +586,7 @@ class QueAgentService : Service() {
                         CosmicOverlayService.addLog("[ERROR] ${state.message}")
                         notifyStateChange("Error", state.message)
                         // Voice trigger: task failed
-                        if (isVoiceEnabled) speechCoordinator.speakToUser("I ran into a problem: ${state.message}")
+                        speechCoordinator.speakToUser("I ran into a problem: ${state.message}")
                     }
                     else -> {}
                 }

@@ -3,6 +3,8 @@ import com.que.core.service.Agent
 import com.que.platform.android.service.QueAccessibilityService
 import com.que.platform.android.service.QueAgentService
 import com.que.platform.android.util.PermissionManager
+import com.que.platform.android.util.AssistantActivationHelper
+import com.que.platform.android.engine.SpeechCoordinator
 
 import android.content.Intent
 import android.net.Uri
@@ -67,13 +69,30 @@ class QueExpoModule : Module() {
         private const val USER_QUESTION_EVENT = "onUserQuestion"
         private const val NARRATION_EVENT = "onNarration"
         private const val CONFIRMATION_EVENT = "onConfirmationRequired"
+        private const val SPEAKING_DONE_EVENT = "onSpeakingDone"
+        private const val ASSIST_ACTIVATED_EVENT = "onAssistActivated"
+        private const val VOICE_VOLUME_EVENT = "onVoiceVolumeChanged"
+        private const val VOICE_PARTIAL_EVENT = "onVoicePartialTranscript"
+        private const val VOICE_FINAL_EVENT = "onVoiceFinalTranscript"
+        private const val VOICE_ERROR_EVENT = "onVoiceError"
     }
 
     override fun definition() = ModuleDefinition {
 
         Name("QueMobileSDK")
 
-        Events(STATE_CHANGE_EVENT, USER_QUESTION_EVENT, NARRATION_EVENT, CONFIRMATION_EVENT)
+        Events(
+            STATE_CHANGE_EVENT, 
+            USER_QUESTION_EVENT, 
+            NARRATION_EVENT, 
+            CONFIRMATION_EVENT, 
+            SPEAKING_DONE_EVENT, 
+            ASSIST_ACTIVATED_EVENT,
+            VOICE_VOLUME_EVENT,
+            VOICE_PARTIAL_EVENT,
+            VOICE_FINAL_EVENT,
+            VOICE_ERROR_EVENT
+        )
 
         // ─── Permissions ─────────────────────────
 
@@ -251,7 +270,7 @@ class QueExpoModule : Module() {
         // ─── Bidirectional Communication ─────────
 
         AsyncFunction("setVoiceEnabled") { enabled: Boolean ->
-            Log.d(TAG, "Setting voice enabled: $enabled")
+            Log.d(TAG, "Setting voice enabled via SDK: $enabled")
             QueAgentService.isVoiceEnabled = enabled
             null
         }
@@ -268,23 +287,30 @@ class QueExpoModule : Module() {
             null
         }
 
-        AsyncFunction("startVoiceRecognition") { promise: Promise ->
-            val ctx = appContext.reactContext ?: run {
-                promise.reject("ERR_CONTEXT", "React context not available", null)
-                return@AsyncFunction
-            }
+        AsyncFunction("startVoiceRecognition") {
+            val ctx = appContext.reactContext ?: throw Exception("React context not available")
             
             val sttManager = com.que.platform.android.util.STTManager(ctx)
             
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
                 try {
-                    sttManager.startListening().collect { transcript ->
-                        promise.resolve(transcript)
+                    sttManager.startListening().collect { event ->
+                        when (event) {
+                            is com.que.platform.android.util.STTEvent.Partial -> 
+                                sendEvent(VOICE_PARTIAL_EVENT, mapOf("text" to event.text))
+                            is com.que.platform.android.util.STTEvent.Final -> 
+                                sendEvent(VOICE_FINAL_EVENT, mapOf("text" to event.text))
+                            is com.que.platform.android.util.STTEvent.Volume -> 
+                                sendEvent(VOICE_VOLUME_EVENT, mapOf("volume" to event.rmsdB))
+                            is com.que.platform.android.util.STTEvent.Error -> 
+                                sendEvent(VOICE_ERROR_EVENT, mapOf("error" to event.message))
+                        }
                     }
                 } catch (e: Exception) {
-                    promise.reject("ERR_STT", e.message, e)
+                    sendEvent(VOICE_ERROR_EVENT, mapOf("error" to (e.message ?: "Unknown error")))
                 }
             }
+            null
         }
 
         // ─── Memory & Context ────────────────────
@@ -340,6 +366,7 @@ class QueExpoModule : Module() {
                     promise.resolve(emptyList<Map<String, Any>>())
                 }
             }
+            null
         }
 
         // ─── Local Model Management ──────────────
@@ -384,6 +411,62 @@ class QueExpoModule : Module() {
                 "state" to QueAgentService.currentStateName,
                 "isRunning" to QueAgentService.isRunning
             )
+        }
+
+        // ─── TTS ─────────────────────────────────
+
+        AsyncFunction("speak") { text: String, promise: Promise ->
+            val ctx = appContext.reactContext ?: run {
+                promise.reject("ERR_CONTEXT", "React context not available", null)
+                return@AsyncFunction
+            }
+
+            val coordinator = SpeechCoordinator.getInstance(ctx)
+            coordinator.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH)
+
+            // Poll for completion
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                kotlinx.coroutines.delay(100)
+                while (coordinator.isSpeaking()) {
+                    kotlinx.coroutines.delay(100)
+                }
+                try {
+                    sendEvent(SPEAKING_DONE_EVENT, mapOf("status" to "done"))
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to send speaking done event", e)
+                }
+                promise.resolve(null)
+            }
+            null
+        }
+
+        Function("stopSpeaking") {
+            val ctx = appContext.reactContext
+            if (ctx != null) {
+                SpeechCoordinator.getInstance(ctx).stop()
+            }
+        }
+
+        Function("isSpeaking") {
+            val ctx = appContext.reactContext
+            if (ctx != null) {
+                SpeechCoordinator.getInstance(ctx).isSpeaking()
+            } else {
+                false
+            }
+        }
+
+        // ─── Assistant Activation ─────────────────
+
+        Function("isDefaultAssistant") {
+            val ctx = appContext.reactContext ?: return@Function false
+            AssistantActivationHelper.isDefaultAssistant(ctx)
+        }
+
+        AsyncFunction("openAssistantSettings") {
+            val ctx = appContext.reactContext ?: return@AsyncFunction null
+            AssistantActivationHelper.openAssistantSettings(ctx)
+            null
         }
 
         // ─── Lifecycle ───────────────────────────

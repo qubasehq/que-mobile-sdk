@@ -12,13 +12,23 @@ import kotlinx.coroutines.flow.callbackFlow
 import java.util.Locale
 
 /**
+ * Events emitted by STTManager
+ */
+sealed class STTEvent {
+    data class Partial(val text: String) : STTEvent()
+    data class Final(val text: String) : STTEvent()
+    data class Volume(val rmsdB: Float) : STTEvent()
+    data class Error(val message: String) : STTEvent()
+}
+
+/**
  * Manages Speech-to-Text using Android's SpeechRecognizer.
  */
 class STTManager(private val context: Context) {
 
     private var speechRecognizer: SpeechRecognizer? = null
 
-    fun startListening(): Flow<String> = callbackFlow {
+    fun startListening(): Flow<STTEvent> = callbackFlow {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
@@ -28,7 +38,9 @@ class STTManager(private val context: Context) {
         val listener = object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {}
             override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onRmsChanged(rmsdB: Float) {
+                trySend(STTEvent.Volume(rmsdB))
+            }
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onError(error: Int) {
@@ -37,19 +49,23 @@ class STTManager(private val context: Context) {
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Timeout"
                     else -> "Error $error"
                 }
-                close(RuntimeException(errorMessage)) 
+                trySend(STTEvent.Error(errorMessage))
+                close() 
             }
 
             override fun onResults(results: Bundle?) {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 if (!matches.isNullOrEmpty()) {
-                    trySend(matches[0])
+                    trySend(STTEvent.Final(matches[0]))
                 }
                 close()
             }
 
             override fun onPartialResults(partialResults: Bundle?) {
-                // Optional: emit partials
+                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    trySend(STTEvent.Partial(matches[0]))
+                }
             }
 
             override fun onEvent(eventType: Int, params: Bundle?) {}

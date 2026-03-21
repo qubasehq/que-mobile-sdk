@@ -42,6 +42,18 @@ export interface ConfirmationEvent {
     actionPreview: string;
 }
 
+export interface VoiceVolumeEvent {
+    volume: number;
+}
+
+export interface VoiceTranscriptEvent {
+    text: string;
+}
+
+export interface VoiceErrorEvent {
+    error: string;
+}
+
 export interface TaskRecord {
     id: number;
     taskText: string;
@@ -198,10 +210,39 @@ export async function replyToAgent(reply: string): Promise<void> {
 
 /**
  * Start native voice recognition (STT).
- * Returns a promise that resolves with the recognized text.
+ * Events will be emitted for volume, partials, and final results.
  */
-export async function startVoiceRecognition(): Promise<string> {
+export async function startVoiceRecognition(): Promise<void> {
     return QueMobileSDK.startVoiceRecognition();
+}
+
+// ─── TTS ─────────────────────────────────────────
+
+/** Speak text using native TTS. Resolves when speech finishes. */
+export async function speak(text: string): Promise<void> {
+    return QueMobileSDK.speak(text);
+}
+
+/** Stop any current TTS speech */
+export function stopSpeaking(): void {
+    QueMobileSDK.stopSpeaking();
+}
+
+/** Check if TTS is currently speaking */
+export function isSpeaking(): boolean {
+    return QueMobileSDK.isSpeaking();
+}
+
+// ─── Assistant ───────────────────────────────────
+
+/** Check if Que is set as the default digital assistant */
+export function isDefaultAssistant(): boolean {
+    return QueMobileSDK.isDefaultAssistant();
+}
+
+/** Open the system settings to set default digital assistant */
+export async function openAssistantSettings(): Promise<void> {
+    return QueMobileSDK.openAssistantSettings();
 }
 
 // ─── Memory & Context ────────────────────────────
@@ -270,6 +311,44 @@ export function addConfirmationListener(
     return emitter.addListener('onConfirmationRequired', listener);
 }
 
+/** Subscribe to TTS speaking done events */
+export function addSpeakingDoneListener(
+    listener: (event: { status: string }) => void
+): Subscription {
+    return emitter.addListener('onSpeakingDone', listener);
+}
+
+/** Subscribe to assistant activation events (power button long press) */
+export function addAssistActivatedListener(
+    listener: () => void
+): Subscription {
+    return emitter.addListener('onAssistActivated', listener);
+}
+
+export function addVoiceVolumeListener(
+    listener: (event: VoiceVolumeEvent) => void
+): Subscription {
+    return emitter.addListener('onVoiceVolumeChanged', listener);
+}
+
+export function addVoicePartialListener(
+    listener: (event: VoiceTranscriptEvent) => void
+): Subscription {
+    return emitter.addListener('onVoicePartialTranscript', listener);
+}
+
+export function addVoiceFinalListener(
+    listener: (event: VoiceTranscriptEvent) => void
+): Subscription {
+    return emitter.addListener('onVoiceFinalTranscript', listener);
+}
+
+export function addVoiceErrorListener(
+    listener: (event: VoiceErrorEvent) => void
+): Subscription {
+    return emitter.addListener('onVoiceError', listener);
+}
+
 // ─── Default Export (convenience) ────────────────
 
 const QueSDK = {
@@ -301,6 +380,15 @@ const QueSDK = {
     replyToAgent,
     startVoiceRecognition,
 
+    // TTS
+    speak,
+    stopSpeaking,
+    isSpeaking,
+
+    // Assistant
+    isDefaultAssistant,
+    openAssistantSettings,
+
     // Memory & Context
     getTaskHistory,
     getTaskActions,
@@ -318,6 +406,12 @@ const QueSDK = {
     addUserQuestionListener,
     addNarrationListener,
     addConfirmationListener,
+    addSpeakingDoneListener,
+    addAssistActivatedListener,
+    addVoiceVolumeListener,
+    addVoicePartialListener,
+    addVoiceFinalListener,
+    addVoiceErrorListener,
 };
 
 export default QueSDK;

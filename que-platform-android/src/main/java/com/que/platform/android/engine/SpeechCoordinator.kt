@@ -1,5 +1,6 @@
 package com.que.platform.android.engine
 import com.que.platform.android.util.STTManager
+import com.que.platform.android.util.STTEvent
 
 import android.content.Context
 import android.speech.tts.TextToSpeech
@@ -128,8 +129,13 @@ class SpeechCoordinator private constructor(private val context: Context) {
             try {
                 onListeningStateChange(true)
                 sttManager.startListening()
-                    .collect { result ->
-                        onResult(result)
+                    .collect { event ->
+                        when (event) {
+                            is STTEvent.Partial -> onPartialResult(event.text)
+                            is STTEvent.Final -> onResult(event.text)
+                            is STTEvent.Error -> onError(event.message)
+                            else -> {}
+                        }
                     }
             } catch (e: Exception) {
                 // If STT fails (Timeout, No Match), we come here

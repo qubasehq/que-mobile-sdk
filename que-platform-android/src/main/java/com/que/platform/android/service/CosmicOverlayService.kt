@@ -4,6 +4,7 @@ import com.que.core.service.Agent
 import com.que.platform.android.overlay.CosmicWaveView
 import com.que.platform.android.overlay.QueMascotView
 import com.que.platform.android.util.STTManager
+import com.que.platform.android.util.STTEvent
 
 import android.app.Service
 import android.content.Intent
@@ -235,7 +236,8 @@ class CosmicOverlayService : Service() {
             layoutType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_SECURE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
@@ -668,11 +670,23 @@ class CosmicOverlayService : Service() {
                     sttJob?.cancel()
                     sttJob = scope.launch(Dispatchers.Main) {
                         try {
-                            sttManager.startListening().collect { transcript ->
-                                sttStatus.text = "🗣️ \"$transcript\""
-                                onReply(transcript)
-                                hideInteractionPanel()
-                                sttJob?.cancel()
+                            sttManager.startListening().collect { event ->
+                                when (event) {
+                                    is STTEvent.Partial -> {
+                                        sttStatus.text = "🗣️ \"${event.text}\"..."
+                                    }
+                                    is STTEvent.Final -> {
+                                        sttStatus.text = "🗣️ \"${event.text}\""
+                                        onReply(event.text)
+                                        hideInteractionPanel()
+                                        sttJob?.cancel()
+                                    }
+                                    is STTEvent.Error -> {
+                                        sttStatus.text = "Microphone ended. Please type."
+                                        sttStatus.setTextColor(COL_TEXT_DIM)
+                                    }
+                                    else -> {}
+                                }
                             }
                         } catch (e: Exception) {
                             sttStatus.text = "Microphone ended. Please type."
