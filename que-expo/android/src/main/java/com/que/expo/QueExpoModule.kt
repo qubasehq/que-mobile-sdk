@@ -79,7 +79,7 @@ class QueExpoModule : Module() {
 
     override fun definition() = ModuleDefinition {
 
-        Name("QueMobileSDK")
+        Name("QueExpoV3")
 
         Events(
             STATE_CHANGE_EVENT, 
@@ -278,6 +278,19 @@ class QueExpoModule : Module() {
         AsyncFunction("setAutonomousMode") { enabled: Boolean ->
             Log.d(TAG, "Setting autonomous mode: $enabled")
             QueAgentService.isAutonomousMode = enabled
+            null
+        }
+
+        AsyncFunction("setNativeAdvancedSettings") { config: Map<String, Any> ->
+            Log.d(TAG, "Setting advanced configurations: $config")
+            (config["enablePredictivePlanning"] as? Boolean)?.let { QueAgentService.enablePredictivePlanning = it }
+            (config["enableAdaptiveLearning"] as? Boolean)?.let { QueAgentService.enableAdaptiveLearning = it }
+            (config["retryFailedActions"] as? Boolean)?.let { QueAgentService.retryFailedActions = it }
+            (config["maxRetries"] as? Number)?.let { QueAgentService.maxRetries = it.toInt() }
+            (config["maxFailures"] as? Number)?.let { QueAgentService.maxFailures = it.toInt() }
+            (config["llmTimeoutMs"] as? Number)?.let { QueAgentService.llmTimeoutMs = it.toLong() }
+            (config["includeScreenshots"] as? Boolean)?.let { QueAgentService.includeScreenshots = it }
+            (config["enableLogging"] as? Boolean)?.let { QueAgentService.enableLogging = it }
             null
         }
 

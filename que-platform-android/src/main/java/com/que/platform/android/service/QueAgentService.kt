@@ -108,6 +108,15 @@ class QueAgentService : Service() {
         @Volatile
         var isAutonomousMode: Boolean = true
 
+        @Volatile var enablePredictivePlanning: Boolean = false
+        @Volatile var enableAdaptiveLearning: Boolean = true
+        @Volatile var retryFailedActions: Boolean = true
+        @Volatile var maxRetries: Int = 3
+        @Volatile var maxFailures: Int = 3
+        @Volatile var llmTimeoutMs: Long = 30000
+        @Volatile var includeScreenshots: Boolean = true
+        @Volatile var enableLogging: Boolean = true
+
         lateinit var boxStore: io.objectbox.BoxStore
             private set
             
@@ -449,14 +458,15 @@ class QueAgentService : Service() {
         // Create settings
         val settings = com.que.core.model.AgentSettings(
             maxSteps = maxSteps,
-            maxRetries = 5,
-            maxFailures = 5,
-            enableLogging = true,
+            maxRetries = QueAgentService.maxRetries,
+            maxFailures = QueAgentService.maxFailures,
+            enableLogging = QueAgentService.enableLogging,
             model = model,
-            includeScreenshots = true,
-            retryFailedActions = true,
-            enableAdaptiveLearning = true,
-            enablePredictivePlanning = this.enablePredictivePlanning,
+            llmTimeoutMs = QueAgentService.llmTimeoutMs,
+            includeScreenshots = QueAgentService.includeScreenshots,
+            retryFailedActions = QueAgentService.retryFailedActions,
+            enableAdaptiveLearning = QueAgentService.enableAdaptiveLearning,
+            enablePredictivePlanning = QueAgentService.enablePredictivePlanning,
             isAutonomousMode = QueAgentService.isAutonomousMode
         )
         Log.d(TAG, "✓ Agent settings created")

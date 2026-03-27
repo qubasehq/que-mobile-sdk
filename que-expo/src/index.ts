@@ -1,3 +1,4 @@
+// @ts-ignore
 import { requireNativeModule, EventEmitter, type Subscription } from 'expo-modules-core';
 
 // ─── Types ───────────────────────────────────────
@@ -17,6 +18,17 @@ export type AgentStateName =
 export interface AgentStateEvent {
     state: AgentStateName;
     message?: string;
+}
+
+export interface AdvancedSettings {
+    enablePredictivePlanning?: boolean;
+    enableAdaptiveLearning?: boolean;
+    retryFailedActions?: boolean;
+    maxRetries?: number;
+    maxFailures?: number;
+    llmTimeoutMs?: number;
+    includeScreenshots?: boolean;
+    enableLogging?: boolean;
 }
 
 export interface AgentStatus {
@@ -96,91 +108,91 @@ export interface ModelInfo {
 
 // ─── Native Module ───────────────────────────────
 
-const QueMobileSDK = requireNativeModule('QueMobileSDK');
-const emitter = new EventEmitter(QueMobileSDK);
+const NativeModule = requireNativeModule('QueExpoV3');
+const emitter = new EventEmitter(NativeModule);
 
 // ─── Permissions ─────────────────────────────────
 
 /** Check if the accessibility service is enabled */
 export function hasAccessibilityPermission(): boolean {
-    return QueMobileSDK.hasAccessibilityPermission();
+    return NativeModule.hasAccessibilityPermission();
 }
 
 /** Check if the overlay (draw-over-apps) permission is granted */
 export function hasOverlayPermission(): boolean {
-    return QueMobileSDK.hasOverlayPermission();
+    return NativeModule.hasOverlayPermission();
 }
 
 export function hasAudioPermission(): boolean {
-    return QueMobileSDK.hasAudioPermission();
+    return NativeModule.hasAudioPermission();
 }
 
 /** Check if all required permissions (accessibility + overlay) are granted */
 export function hasRequiredPermissions(): boolean {
-    return QueMobileSDK.hasRequiredPermissions();
+    return NativeModule.hasRequiredPermissions();
 }
 
 /** Open the accessibility settings screen */
 export async function requestAccessibilityPermission(): Promise<void> {
-    return QueMobileSDK.requestAccessibilityPermission();
+    return NativeModule.requestAccessibilityPermission();
 }
 
 /** Open the overlay permission settings screen */
 export async function requestOverlayPermission(): Promise<void> {
-    return QueMobileSDK.requestOverlayPermission();
+    return NativeModule.requestOverlayPermission();
 }
 
 export async function requestAudioPermission(): Promise<void> {
-    return QueMobileSDK.requestAudioPermission();
+    return NativeModule.requestAudioPermission();
 }
 
 /** Open the accessibility settings screen (shorthand) */
 export async function requestPermissions(): Promise<void> {
-    return QueMobileSDK.requestPermissions();
+    return NativeModule.requestPermissions();
 }
 
 /** Open accessibility settings */
 export async function openAccessibilitySettings(): Promise<void> {
-    return QueMobileSDK.openAccessibilitySettings();
+    return NativeModule.openAccessibilitySettings();
 }
 
 /** Open overlay permission settings */
 export async function openOverlaySettings(): Promise<void> {
-    return QueMobileSDK.openOverlaySettings();
+    return NativeModule.openOverlaySettings();
 }
 
 // ─── API Key ─────────────────────────────────────
 
 /** Set the Gemini API key (stored in memory only) */
 export function setApiKey(apiKey: string): void {
-    QueMobileSDK.setApiKey(apiKey);
+    NativeModule.setApiKey(apiKey);
 }
 
 // ─── Agent Control ───────────────────────────────
 
 /** Start the AI agent with a task and optional max steps */
 export async function startAgent(task: string, maxSteps: number = 30, model: string): Promise<void> {
-    return QueMobileSDK.startAgent(task, maxSteps, model);
+    return NativeModule.startAgent(task, maxSteps, model);
 }
 
 /** Stop the running agent */
 export async function stopAgent(): Promise<void> {
-    return QueMobileSDK.stopAgent();
+    return NativeModule.stopAgent();
 }
 
 /** Pause the running agent */
 export async function pauseAgent(): Promise<void> {
-    return QueMobileSDK.pauseAgent();
+    return NativeModule.pauseAgent();
 }
 
 /** Resume a paused agent */
 export async function resumeAgent(): Promise<void> {
-    return QueMobileSDK.resumeAgent();
+    return NativeModule.resumeAgent();
 }
 
 /** Get the current agent state (polling) */
 export function getAgentState(): AgentStatus {
-    return QueMobileSDK.getAgentState();
+    return NativeModule.getAgentState();
 }
 
 // ─── Bidirectional Communication ─────────────────
@@ -189,14 +201,29 @@ export function getAgentState(): AgentStatus {
  * Toggle the agent's text-to-speech voice feedback.
  */
 export async function setVoiceEnabled(enabled: boolean): Promise<void> {
-    return QueMobileSDK.setVoiceEnabled(enabled);
+    return NativeModule.setVoiceEnabled(enabled);
 }
 
 /**
  * Toggle whether the agent can execute actions autonomously.
  */
 export async function setAutonomousMode(enabled: boolean): Promise<void> {
-    return QueMobileSDK.setAutonomousMode(enabled);
+    return NativeModule.setAutonomousMode(enabled);
+}
+
+/**
+ * Configure advanced internal agent settings.
+ */
+export async function setAdvancedSettings(config: AdvancedSettings): Promise<void> {
+    try {
+        if (NativeModule?.setNativeAdvancedSettings) {
+            console.log('--- Calling NativeModule.setNativeAdvancedSettings ---');
+            return await NativeModule.setNativeAdvancedSettings(config);
+        }
+        console.warn('NativeModule.setNativeAdvancedSettings is not available in this build.');
+    } catch (e) {
+        console.error('CRASH in setAdvancedSettings:', e);
+    }
 }
 
 /**
@@ -205,7 +232,7 @@ export async function setAutonomousMode(enabled: boolean): Promise<void> {
  * For confirmations, reply with "yes"/"no"/"confirm"/"deny".
  */
 export async function replyToAgent(reply: string): Promise<void> {
-    return QueMobileSDK.replyToAgent(reply);
+    return NativeModule.replyToAgent(reply);
 }
 
 /**
@@ -213,72 +240,72 @@ export async function replyToAgent(reply: string): Promise<void> {
  * Events will be emitted for volume, partials, and final results.
  */
 export async function startVoiceRecognition(): Promise<void> {
-    return QueMobileSDK.startVoiceRecognition();
+    return NativeModule.startVoiceRecognition();
 }
 
 // ─── TTS ─────────────────────────────────────────
 
 /** Speak text using native TTS. Resolves when speech finishes. */
 export async function speak(text: string): Promise<void> {
-    return QueMobileSDK.speak(text);
+    return NativeModule.speak(text);
 }
 
 /** Stop any current TTS speech */
 export function stopSpeaking(): void {
-    QueMobileSDK.stopSpeaking();
+    NativeModule.stopSpeaking();
 }
 
 /** Check if TTS is currently speaking */
 export function isSpeaking(): boolean {
-    return QueMobileSDK.isSpeaking();
+    return NativeModule.isSpeaking();
 }
 
 // ─── Assistant ───────────────────────────────────
 
 /** Check if Que is set as the default digital assistant */
 export function isDefaultAssistant(): boolean {
-    return QueMobileSDK.isDefaultAssistant();
+    return NativeModule.isDefaultAssistant();
 }
 
 /** Open the system settings to set default digital assistant */
 export async function openAssistantSettings(): Promise<void> {
-    return QueMobileSDK.openAssistantSettings();
+    return NativeModule.openAssistantSettings();
 }
 
 // ─── Memory & Context ────────────────────────────
 
 export function getTaskHistory(limit: number = 50): TaskRecord[] {
-    return QueMobileSDK.getTaskHistory(limit);
+    return NativeModule.getTaskHistory(limit);
 }
 
 export function getTaskActions(taskId: number): ActionItem[] {
-    return QueMobileSDK.getTaskActions(taskId);
+    return NativeModule.getTaskActions(taskId);
 }
 
 export function clearHistory(): void {
-    QueMobileSDK.clearHistory();
+    NativeModule.clearHistory();
 }
 
 export function resolveContext(fields: string[]): Record<string, string> {
-    return QueMobileSDK.resolveContext(fields);
+    return NativeModule.resolveContext(fields);
 }
 
 // ─── Local Model Management ──────────────────────
 
 export function listCloudModels(): Promise<ModelInfo[]> {
-  return QueMobileSDK.listCloudModels();
+  return NativeModule.listCloudModels();
 }
 
 export function getAvailableModels(): Promise<LocalModelInfo[]> {
-    return QueMobileSDK.getAvailableModels();
+    return NativeModule.getAvailableModels();
 }
 
 export function getDownloadedModels(): LocalModelInfo[] {
-    return QueMobileSDK.getDownloadedModels();
+    return NativeModule.getDownloadedModels();
 }
 
 export async function downloadModel(modelId: string): Promise<void> {
-    return QueMobileSDK.downloadModel(modelId);
+    return NativeModule.downloadModel(modelId);
 }
 
 // ─── Events ──────────────────────────────────────
@@ -377,6 +404,7 @@ const QueSDK = {
     // Bidirectional Communication
     setVoiceEnabled,
     setAutonomousMode,
+    setAdvancedSettings,
     replyToAgent,
     startVoiceRecognition,
 
