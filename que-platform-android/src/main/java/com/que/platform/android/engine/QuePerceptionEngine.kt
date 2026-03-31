@@ -1,6 +1,7 @@
 package com.que.platform.android.engine
 import com.que.core.registry.ElementRegistry
 import com.que.core.registry.ServiceManager
+import com.que.core.service.LLMClient
 import com.que.core.service.PerceptionEngine
 import com.que.core.service.ScreenSnapshot
 import com.que.core.util.AgentLogger
@@ -30,15 +31,16 @@ import kotlinx.coroutines.withContext
  * 5. Enhanced UI representation with scroll hints
  */
 class QuePerceptionEngine(
-    private val context: Context
+    private val context: android.content.Context,
+    private val llmClient: com.que.core.service.LLMClient
 ) : PerceptionEngine {
 
     private val parser = SemanticParser()
+    private val visualVerifier = com.que.vision.SemanticVisualVerifier(llmClient)
     private var previousElementIds: Set<Int> = emptySet()
     private val TAG = "QuePerceptionEngine"
 
     override suspend fun capture(): ScreenSnapshot = coroutineScope {
-        val startTime = System.currentTimeMillis()
         AgentLogger.d(TAG, "Starting capture...")
 
         val service = com.que.core.registry.ServiceManager.getService<QueAccessibilityService>() ?: run {
@@ -110,7 +112,7 @@ class QuePerceptionEngine(
             
             // Resolve human-readable app name from package
             val appLabel = try {
-                val pkg = activity?.split("/")?.firstOrNull()
+                val pkg = activity.split("/").firstOrNull()
                 if (pkg != null) {
                     val info = context.packageManager.getApplicationInfo(pkg, 0)
                     context.packageManager.getApplicationLabel(info).toString()
@@ -124,7 +126,7 @@ class QuePerceptionEngine(
             // Create final snapshot with all enhancements
             val finalSnapshot = snapshot.copy(
                 simplifiedDescription = enhancedDescription,
-                activityName = if (appLabel != null) "$appLabel ($activity)" else (activity ?: "Unknown"),
+                activityName = if (appLabel != null) "$appLabel ($activity)" else activity,
                 screenshot = screenshotBytes,
                 scrollablePixelsAbove = scrollAbove,
                 scrollablePixelsBelow = scrollBelow,
@@ -134,13 +136,23 @@ class QuePerceptionEngine(
                 detectedObjects = emptyList()
             )
             
-            // Update the registry so Actions can find these elements
-            com.que.core.registry.ElementRegistry.update(finalSnapshot.interactiveElements)
+            // --- SEMANTIC VISUAL VERIFICATION (SVV) ---
+            // If the parsed hierarchy is poor, trigger Gemini Vision to "see" unlabeled elements
+            val snapshotWithSVV = if (visualVerifier.shouldTriggerSVV(finalSnapshot) && screenshotBytes != null) {
+                visualVerifier.verify(finalSnapshot, screenshotBytes)
+            } else {
+                finalSnapshot
+            }
+
+            // Update the registry so Actions can find these elements (including vision labels)
+            com.que.core.registry.ElementRegistry.update(snapshotWithSVV.interactiveElements)
             
-            // Update visual debug overlay
-            service.debugOverlayController?.updateElements(finalSnapshot.interactiveElements)
-            
-            finalSnapshot
+            // Re-update debug overlay if SVV changed something
+            if (snapshotWithSVV !== finalSnapshot) {
+                service.debugOverlayController?.updateElements(snapshotWithSVV.interactiveElements)
+            }
+
+            snapshotWithSVV
         } catch (e: Exception) {
             AgentLogger.e(TAG, "Critical failure during perception capture", e)
             createEmptySnapshot()

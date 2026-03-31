@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 class ProfileLearner(private val boxStore: BoxStore) {
     private val memoryBox = boxStore.boxFor(UserMemory::class.java)
 
+    @Suppress("UNUSED_PARAMETER")
     suspend fun extractAndLearn(task: TaskRecord) {
         withContext(Dispatchers.IO) {
             // Placeholder: Extract fields from task.summary

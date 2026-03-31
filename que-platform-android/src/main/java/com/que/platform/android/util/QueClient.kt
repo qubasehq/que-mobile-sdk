@@ -99,17 +99,6 @@ class QueClient internal constructor(
                 context.startService(overlayIntent)
             }
             
-            // Initialize components
-            val perception = QuePerceptionEngine(context)
-            
-            // val service = QueAccessibilityService.instance
-            
-            val fileSystem = AndroidFileSystem(context)
-            val intentRegistry = AndroidIntentRegistry(context)
-            
-            val gestureController = ServiceGestureControllerWrapper()
-            val executor = AndroidActionExecutor(gestureController, intentRegistry, fileSystem, context)
-            
             // Initialize LLM Client (Local or Gemini)
             val llm: com.que.core.service.LLMClient = if (useLocalModel && localModelId != null) {
                 try {
@@ -137,6 +126,19 @@ class QueClient internal constructor(
             } else {
                 GeminiClient(key, model)
             }
+
+            // Initialize components
+            val perception = QuePerceptionEngine(context, llm)
+            
+            // val service = QueAccessibilityService.instance
+            
+            val fileSystem = AndroidFileSystem(context)
+            val intentRegistry = AndroidIntentRegistry(context)
+            
+            val gestureController = ServiceGestureControllerWrapper()
+            val appLauncher = com.que.platform.android.util.AppLauncher(context)
+            val eventMonitor = com.que.platform.android.util.AndroidEventMonitor()
+            val executor = AndroidActionExecutor(gestureController, intentRegistry, fileSystem, context, appLauncher, eventMonitor)
             
             val profileLearner = try { ProfileLearner(QueAgentService.boxStore) } catch (e: Exception) { null }
             val historyRepo = try { TaskHistoryRepository(QueAgentService.boxStore, profileLearner) } catch (e: Exception) { null }

@@ -32,6 +32,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import android.view.WindowManager
+import android.widget.Toast
 import com.que.actions.AndroidActionExecutor
 import com.que.llm.GeminiClient
 import kotlinx.coroutines.CoroutineScope
@@ -134,7 +135,19 @@ class QueAgentService : Service() {
         private var agentEventListener: AgentEventListener? = null
         
         // Weak reference to active agent for replyToAgent
-        private var activeAgentRef: WeakReference<QueAgent>? = null
+        private var activeAgentRef: WeakReference<Agent>? = null
+
+        // Global log listener for terminal exposure
+        private var globalLogListener: ((String) -> Unit)? = null
+
+        fun setGlobalLogListener(listener: ((String) -> Unit)?) {
+            globalLogListener = listener
+        }
+
+        fun logToTerminal(message: String) {
+            println(">>>> [QUE_LOG] $message") // Fallback
+            globalLogListener?.invoke(message)
+        }
 
         fun setStateListener(listener: ((stateName: String, message: String) -> Unit)?) {
             stateListener = listener
@@ -164,6 +177,15 @@ class QueAgentService : Service() {
             } else {
                 AgentLogger.e(TAG, "Cannot reply: no active agent")
             }
+        }
+
+        /**
+         * Creates a proxy stub Agent for the Assistant to use.
+         * The Assistant delegates `run()` calls to this agent, which simply fires an Intent
+         * to start this full `QueAgentService`.
+         */
+        fun createStubAgent(context: Context, apiKey: String, model: String): com.que.core.service.Agent {
+            return ProxyQueAgent(context, apiKey, model)
         }
 
         private fun notifyStateChange(stateName: String, message: String = "") {
@@ -255,7 +277,18 @@ class QueAgentService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "onStartCommand received.")
+        val task = intent?.getStringExtra(EXTRA_TASK)
+        val action = intent?.action
+        Toast.makeText(this, "SERVICE START: task=$task action=$action", Toast.LENGTH_LONG).show()
+        Log.d(TAG, "onStartCommand: action=$action, task=${task ?: "null"}")
+        logToTerminal("onStartCommand: action=$action, task=$task")
+        
+        if (task != null) {
+            // Immediate on-screen feedback
+            logToTerminal("Received delegation from Assistant for task: $task")
+            CosmicOverlayService.addLog("[SIGNAL] Received delegation from Assistant")
+            CosmicOverlayService.addLog("[TASK] $task")
+        }
 
         // Unconditionally satisfy Android's strict foreground start rules to prevent ForegroundServiceDidNotStartInTimeException
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -314,7 +347,7 @@ class QueAgentService : Service() {
         }
 
         // Extract configuration
-        val task = intent?.getStringExtra(EXTRA_TASK)
+        // task is already extracted at the top of the function
         val apiKeyFromIntent = sessionApiKey // Retrieve from memory
         val model = intent?.getStringExtra(EXTRA_MODEL) ?: "gemini-2.0-flash"
         val maxStepsFromIntent = intent?.getIntExtra(EXTRA_MAX_STEPS, 30)
@@ -341,22 +374,44 @@ class QueAgentService : Service() {
             
             if (isAlreadyQueued) {
                  Log.d(TAG, "Task already in queue: $task")
+                 println(">>>> [QUE_AGENT] Task already in queue: $task")
+                 CosmicOverlayService.addLog("[QUEUE] Task already in queue, waiting...")
             } else if (isCurrentlyRunning) {
                  Log.d(TAG, "Task matches current ACTIVE task. Ignoring duplicate: $task")
+                 println(">>>> [QUE_AGENT] Ignoring duplicate task: $task")
+                 CosmicOverlayService.addLog("[QUEUE] Task already running: $task")
             } else {
                  Log.d(TAG, "Adding task to queue: $task")
+                 println(">>>> [QUE_AGENT] Added task to queue: $task")
                  taskQueue.add(task)
+                 android.widget.Toast.makeText(this, "Que Agent: Task Received", android.widget.Toast.LENGTH_SHORT).show()
+                 CosmicOverlayService.addLog("[QUEUE] Added to queue: $task")
             }
         }
 
         // If the agent is not already processing tasks, start the loop
         if (!isRunning && taskQueue.isNotEmpty()) {
-            Log.i(TAG, "Agent not running, starting processing loop.")
+            Log.i(TAG, "Agent not running, starting processing loop. Queue size: ${taskQueue.size}")
             isRunning = true 
 
             serviceScope.launch {
-                processTaskQueue()
+                try {
+                    processTaskQueue()
+                } finally {
+                    isRunning = false
+                    Log.d(TAG, "Flag isRunning set back to false.")
+                    // Only stop the service if no new tasks arrived in the meantime
+                    serviceScope.launch {
+                        kotlinx.coroutines.delay(8000)
+                        if (!isRunning && taskQueue.isEmpty()) {
+                            Log.i(TAG, "Still idle after 8s, stopping service.")
+                            stopSelf()
+                        }
+                    }
+                }
             }
+        } else if (isRunning) {
+            Log.d(TAG, "Agent is already running. Task added to queue. Queue size: ${taskQueue.size}")
         }
         return START_STICKY
     }
@@ -372,7 +427,9 @@ class QueAgentService : Service() {
                 attachStateMonitoring()
                 Log.i(TAG, "✅ Agent initialized successfully")
             } catch (e: Exception) {
-                Log.e(TAG, "❌ Failed to initialize agent", e)
+                val errStr = "Failed to initialize agent: ${e.message}\n${Log.getStackTraceString(e)}"
+                Log.e(TAG, "❌ $errStr", e)
+                logToTerminal("ERROR: $errStr")
                 stopSelf()
                 return
             }
@@ -440,13 +497,8 @@ class QueAgentService : Service() {
              }
         }
 
-        Log.i(TAG, "=== TASK QUEUE EMPTY, STOPPING SERVICE ===")
-        // Give the final TTS (Task Completed/Failed) time to play before shutting down
-        serviceScope.launch {
-            // Wait for speech to finish before stopping service
-            kotlinx.coroutines.delay(6000)
-            stopSelf()
-        }
+        Log.i(TAG, "=== TASK QUEUE EMPTY, WAITING FOR TIMEOUT ===")
+        // The service will stop itself in the launch { ... } block defined in onStartCommand finally handler
     }
 
     private fun initializeAgent() {
@@ -471,8 +523,11 @@ class QueAgentService : Service() {
         )
         Log.d(TAG, "✓ Agent settings created")
         
-        val perception = QuePerceptionEngine(this)
-        Log.d(TAG, "✓ Perception engine created")
+        val llm = GeminiClient(apiKey, model)
+        Log.d(TAG, "✓ LLM client created")
+
+        val perception = QuePerceptionEngine(this, llm)
+        Log.d(TAG, "✓ Perception engine created with LLM support")
         
         val fileSystem = AndroidFileSystem(this)
         Log.d(TAG, "✓ File system created")
@@ -490,9 +545,6 @@ class QueAgentService : Service() {
         
         val executor = AndroidActionExecutor(gestureController, intentRegistry, fileSystem, this, appLauncher, eventMonitor)
         Log.d(TAG, "✓ Action executor created with launcher and event monitor")
-        
-        val llm = GeminiClient(apiKey, model)
-        Log.d(TAG, "✓ LLM client created")
         
         val speechService = SpeechServiceWrapper(speechCoordinator)
         
@@ -547,6 +599,9 @@ class QueAgentService : Service() {
                 Log.d(TAG, "Agent state changed: $state")
                 CosmicOverlayService.updateState(state)
                 
+                // Add this state to terminal log too
+                logToTerminal("[AGENT_STATE] $state")
+
                 // Update system-wide cosmic overlay
                 val visualState = when (state) {
                     is com.que.core.model.AgentState.Perceiving -> CosmicOverlayController.AgentVisualState.IDLE
@@ -652,6 +707,14 @@ class QueAgentService : Service() {
                 }
             }
         }
+        
+        serviceScope.launch {
+            agent.events.collect { event ->
+                if (event is com.que.core.model.AgentEvent.Narration) {
+                    logToTerminal("[AGENT_INNER] ${event.message}")
+                }
+            }
+        }
     }
     
     override fun onDestroy() {
@@ -710,4 +773,67 @@ class QueAgentService : Service() {
         }
     }
 
+}
+
+/**
+ * A proxy agent implementation used by the Assistant to forward task execution into intents.
+ * This class simply triggers `QueAgentService.start(context, task)` and leaves actual execution 
+ * up to the running visual accessibility instance.
+ */
+class ProxyQueAgent(
+    private val context: android.content.Context,
+    private val apiKey: String,
+    private val model: String
+) : com.que.core.service.Agent {
+    private val _state = kotlinx.coroutines.flow.MutableStateFlow<com.que.core.model.AgentState>(com.que.core.model.AgentState.Idle)
+    override val state: kotlinx.coroutines.flow.StateFlow<com.que.core.model.AgentState> = _state
+
+    private val _events = kotlinx.coroutines.flow.MutableSharedFlow<com.que.core.model.AgentEvent>()
+    override val events: kotlinx.coroutines.flow.SharedFlow<com.que.core.model.AgentEvent> = _events
+
+    override suspend fun run(instruction: String): com.que.core.model.AgentState {
+        android.util.Log.i("ProxyQueAgent", "Delegating task to QueAgentService: $instruction")
+        QueAgentService.logToTerminal("Proxy: Requesting Agent Service execution for '$instruction'")
+        // CRITICAL: Must run on Main thread because startForegroundService requires it
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            try {
+                QueAgentService.start(context, instruction, apiKey, model)
+                QueAgentService.logToTerminal("Proxy: Delegation SUCCESS — service started")
+            } catch (e: Exception) {
+                android.util.Log.e("ProxyQueAgent", "Failed to start QueAgentService", e)
+                QueAgentService.logToTerminal("Proxy: Delegation FAILED! ${e.message}")
+            }
+        }
+        return com.que.core.model.AgentState.Finished("Delegated automation to existing Service.")
+    }
+
+    override fun stop() {
+        QueAgentService.stop(context)
+    }
+
+    override fun pause() {
+        QueAgentService.pause(context)
+    }
+
+    override fun resume() {
+        QueAgentService.resume(context)
+    }
+
+    override fun isPaused(): Boolean = false
+
+    override fun resumeWithUserReply(reply: String) {
+        QueAgentService.replyToAgent(reply)
+    }
+
+    override suspend fun createCheckpoint(): com.que.core.model.AgentCheckpoint {
+        return com.que.core.model.AgentCheckpoint(
+            taskId = "",
+            step = 0,
+            loopState = com.que.core.engine.AgentLoopState(),
+            history = emptyList(),
+            memoryMessages = emptyList()
+        )
+    }
+
+    override suspend fun restoreFromCheckpoint(checkpoint: com.que.core.model.AgentCheckpoint) {}
 }

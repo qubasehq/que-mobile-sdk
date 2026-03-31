@@ -19,6 +19,7 @@ sealed class STTEvent {
     data class Final(val text: String) : STTEvent()
     data class Volume(val rmsdB: Float) : STTEvent()
     data class Error(val message: String) : STTEvent()
+    object EndOfSpeech : STTEvent()
 }
 
 /**
@@ -33,6 +34,10 @@ class STTManager(private val context: Context) {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            // Reduce silence timeouts so onEndOfSpeech fires quickly after user stops talking
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000L)
         }
 
         val listener = object : RecognitionListener {
@@ -42,7 +47,9 @@ class STTManager(private val context: Context) {
                 trySend(STTEvent.Volume(rmsdB))
             }
             override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
+            override fun onEndOfSpeech() {
+                trySend(STTEvent.EndOfSpeech)
+            }
             override fun onError(error: Int) {
                 val errorMessage = when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH -> "No match"

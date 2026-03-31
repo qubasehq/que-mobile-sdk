@@ -82,6 +82,7 @@ class FloatingQueButtonService : Service() {
             val windowType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             } else {
+                @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             }
 
@@ -130,7 +131,15 @@ class FloatingQueButtonService : Service() {
             // or fallback to the main Agent service if applicable.
             // Placeholder: Log for now, will link to QueConversationalService shortly.
             Log.d(TAG, "Triggering agent activation...")
-            val serviceIntent = Intent(this, QueConversationalService::class.java)
+            val prefs = getSharedPreferences("QuePrefs", Context.MODE_PRIVATE)
+            val apiKey = prefs.getString("API_KEY", null)
+            val pvKey = prefs.getString("PICOVOICE_KEY", null)
+            
+            val serviceIntent = Intent(this, QueConversationalService::class.java).apply {
+                if (apiKey != null) putExtra("EXTRA_API_KEY", apiKey)
+                if (pvKey != null) putExtra("EXTRA_PICOVOICE_KEY", pvKey)
+            }
+            
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(serviceIntent)
             } else {

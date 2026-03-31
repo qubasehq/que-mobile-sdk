@@ -13,7 +13,7 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 class AudioWaveView @JvmOverloads constructor(
-    context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
+    context: Context, attrs: AttributeSet? = null, @Suppress("UNUSED_PARAMETER") defStyleAttr: Int = 0
 ) : View(context, attrs) {
 
     // --- Configuration Constants ---

@@ -646,7 +646,7 @@ class AndroidActionExecutor(
             66 -> { // KEYCODE_ENTER
                 // Some apps submit on 'Enter', others need a tap. 
                 // We'll try to trigger the IME action if possible.
-                val success = controller.performGlobal(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS) // This is just a test, ignore
+                controller.performGlobal(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS) // This is just a test, ignore
                 // Real implementation would use controller.pressEnter() if available
                 ActionResult(true, "Sent ENTER (simulated)")
             }

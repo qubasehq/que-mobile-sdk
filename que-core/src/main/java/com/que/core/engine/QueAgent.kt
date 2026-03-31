@@ -731,7 +731,7 @@ class QueAgent(
         log("💪 Executing ${agentOutput.actions.size} action(s)...", "I")
         val actionResults = mutableListOf<ActionResult>()
 
-        for ((index, action) in agentOutput.actions.withIndex()) {
+        for (action in agentOutput.actions) {
             // Handle bidirectional communication actions BEFORE executing
             when (action) {
                 is Action.AskUser -> {

@@ -51,6 +51,12 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <service
+            android:name=".service.QueAssistantService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
+
         <!-- Digital Assistant Services -->
         <service
             android:name=".service.QueAssistService"

@@ -23,6 +23,10 @@ class SpeechCoordinator private constructor(private val context: Context) {
     private var isInitialized = false
     private val TAG = "SpeechCoordinator"
     
+    private var pendingVoiceName: String? = null
+    private var pendingPitch: Float = 1.0f
+    private var pendingRate: Float = 1.0f
+    
     companion object {
         @Volatile
         private var instance: SpeechCoordinator? = null
@@ -53,6 +57,11 @@ class SpeechCoordinator private constructor(private val context: Context) {
                     } else {
                         isInitialized = true
                         Log.d(TAG, "TTS initialized successfully")
+                        
+                        // Apply pending settings
+                        pendingVoiceName?.let { setVoice(it) }
+                        if (pendingPitch != 1.0f) setPitch(pendingPitch)
+                        if (pendingRate != 1.0f) setSpeechRate(pendingRate)
                     }
                 }
             } else {
@@ -112,6 +121,50 @@ class SpeechCoordinator private constructor(private val context: Context) {
      */
     fun isSpeaking(): Boolean {
         return tts?.isSpeaking ?: false
+    }
+
+    fun getAvailableVoices(): List<android.speech.tts.Voice> {
+        val allVoices = tts?.voices?.toList() ?: emptyList()
+        // Filter for local voices that don't need internet AND are English
+        return allVoices.filter { 
+            !it.isNetworkConnectionRequired && 
+            it.locale.language.startsWith("en", ignoreCase = true)
+        }
+    }
+
+    fun setVoice(voiceName: String) {
+        if (!isInitialized) {
+            Log.d(TAG, "TTS not ready, queuing voice: $voiceName")
+            pendingVoiceName = voiceName
+            return
+        }
+        val voice = tts?.voices?.find { it.name == voiceName }
+        if (voice != null) {
+            tts?.setLanguage(voice.locale)
+            tts?.voice = voice
+            pendingVoiceName = null
+            Log.d(TAG, "Voice set to: $voiceName (${voice.locale})")
+        } else {
+            Log.w(TAG, "Voice not found: $voiceName")
+        }
+    }
+
+    fun setPitch(pitch: Float) {
+        if (!isInitialized) {
+            pendingPitch = pitch
+            return
+        }
+        tts?.setPitch(pitch)
+        pendingPitch = 1.0f
+    }
+
+    fun setSpeechRate(rate: Float) {
+        if (!isInitialized) {
+            pendingRate = rate
+            return
+        }
+        tts?.setSpeechRate(rate)
+        pendingRate = 1.0f
     }
     
     private val sttManager: STTManager by lazy { STTManager(context) }

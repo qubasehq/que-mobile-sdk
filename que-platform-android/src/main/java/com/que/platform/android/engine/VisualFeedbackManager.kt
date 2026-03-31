@@ -16,11 +16,13 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
+import android.view.LayoutInflater
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.TextView
+import android.widget.FrameLayout
 import androidx.core.graphics.toColorInt
+import com.que.platform.android.R
 
 /**
  * Manages visual feedback overlays for the Que Agent
@@ -130,24 +132,27 @@ class VisualFeedbackManager private constructor(private val context: Context) {
                 return@post
             }
 
-            transcriptionView = TextView(context).apply {
-                text = initialText
-                val glassBackground = GradientDrawable(
-                    GradientDrawable.Orientation.TL_BR,
-                    intArrayOf(0xDD0D0D2E.toInt(), 0xDD2A0D45.toInt())
-                ).apply {
-                    cornerRadius = 28f
-                    setStroke(1, 0x80FFFFFF.toInt())
-                }
-                background = glassBackground
-                setTextColor(0xFFE0E0E0.toInt())
-                textSize = 16f
-                setPadding(40, 24, 40, 24)
-                typeface = Typeface.MONOSPACE
-            }
+            val inflater = LayoutInflater.from(context)
+            val customView = inflater.inflate(R.layout.que_listening_overlay, null)
+            val transcriptionText = customView.findViewById<TextView>(R.id.text_transcription)
+            val glowWrapper = customView.findViewById<FrameLayout>(R.id.glow_wrapper)
+
+            // Setup glowing border
+            val density = context.resources.displayMetrics.density
+            val gradient = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xFFE5079E.toInt(), 0xFF7115E0.toInt(), 0xFF0074F0.toInt(), 0xFFE5079E.toInt())
+            )
+            gradient.cornerRadius = 30f * density
+            glowWrapper.background = gradient
+
+            transcriptionText.text = initialText
+
+            // We store the nested transcriptionText so updateTranscription works, but we add the root customView
+            transcriptionView = transcriptionText
 
             val params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT, 
+                WindowManager.LayoutParams.MATCH_PARENT, 
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -159,12 +164,14 @@ class VisualFeedbackManager private constructor(private val context: Context) {
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                y = 250 // Position above bottom
+                y = (40 * density).toInt()  // Bottom margin equivalent
             }
 
             try {
-                windowManager.addView(transcriptionView, params)
+                windowManager.addView(customView, params)
                 Log.d(TAG, "Transcription view added.")
+                // Store the root view as a tag for later removal
+                transcriptionText.tag = customView
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to add transcription view.", e)
                 transcriptionView = null
@@ -180,10 +187,11 @@ class VisualFeedbackManager private constructor(private val context: Context) {
 
     fun hideTranscription() {
         mainHandler.post {
-            transcriptionView?.let {
-                if (it.isAttachedToWindow) {
+            transcriptionView?.let { tv ->
+                val rootView = tv.tag as? View ?: tv
+                if (rootView.isAttachedToWindow) {
                     try {
-                        windowManager.removeView(it)
+                        windowManager.removeView(rootView)
                     } catch (e: Exception) {
                         Log.e(TAG, "Error removing transcription view.", e)
                     }
@@ -378,7 +386,6 @@ class VisualFeedbackManager private constructor(private val context: Context) {
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.BOTTOM
-                softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
             }
             windowManager.addView(audioWaveView, params)
             Log.d(TAG, "Audio wave view added.")

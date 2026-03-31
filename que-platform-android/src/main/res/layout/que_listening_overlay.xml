@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:padding="16dp">
+
+    <!-- Glowing Background / Border Wrapper -->
+    <FrameLayout
+        android:id="@+id/glow_wrapper"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#00000000">
+
+        <!-- Inner Content Window -->
+        <LinearLayout
+            android:id="@+id/inner_content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/que_overlay_bg"
+            android:padding="16dp"
+            android:layout_margin="2dp">
+
+            <ImageView
+                android:id="@+id/icon_sparkle"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@android:drawable/ic_menu_add"
+                android:tint="#1C1C1E"
+                android:layout_marginEnd="12dp" />
+
+            <TextView
+                android:id="@+id/text_transcription"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Ask Que"
+                android:textColor="#1C1C1E"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:singleLine="true"
+                android:ellipsize="marquee" />
+
+            <FrameLayout
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="@drawable/que_overlay_mic_bg"
+                android:layout_marginStart="12dp">
+                
+                <ImageView
+                    android:id="@+id/icon_mic"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_gravity="center"
+                    android:src="@android:drawable/ic_btn_speak_now"
+                    android:tint="#FFFFFF" />
+            </FrameLayout>
+            
+        </LinearLayout>
+    </FrameLayout>
+</FrameLayout>

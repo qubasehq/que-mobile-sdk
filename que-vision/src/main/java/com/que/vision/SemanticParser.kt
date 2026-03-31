@@ -106,7 +106,7 @@ class SemanticParser {
             val child = node.getChild(i)
             if (child != null) {
                 combinedHash = 31 * combinedHash + traverse(child, sb, elements)
-                child.recycle() // RECYCLE TO PREVENT LEAKS!
+                // Note: recycle() is deprecated for AccessibilityNodeInfo in modern Android
             }
         }
         

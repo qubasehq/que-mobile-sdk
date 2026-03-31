@@ -53,6 +53,7 @@ class QueConversationalService : Service() {
     }
 
     private var apiKey: String? = null
+    private var picovoiceKey: String? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand")
@@ -67,6 +68,16 @@ class QueConversationalService : Service() {
             val prefs = getSharedPreferences("QuePrefs", 0) // MODE_PRIVATE
             this.apiKey = prefs.getString("API_KEY", null)
             Log.d(TAG, "Restored API Key from prefs: ${this.apiKey != null}")
+        }
+        
+        // Retrieve Picovoice Key if provided
+        val pvKeyFromIntent = intent?.getStringExtra("EXTRA_PICOVOICE_KEY")
+        if (pvKeyFromIntent != null) {
+            this.picovoiceKey = pvKeyFromIntent
+        } else {
+            val prefs = getSharedPreferences("QuePrefs", 0)
+            this.picovoiceKey = prefs.getString("PICOVOICE_KEY", null)
+            Log.d(TAG, "Restored Picovoice Key from prefs: ${this.picovoiceKey != null}")
         }
         
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -148,7 +159,24 @@ class QueConversationalService : Service() {
             // Try setting up again?
             setupWakeWord()
         }
-        wakeWordDetector?.start()
+        
+        val key = if (!picovoiceKey.isNullOrBlank()) {
+            picovoiceKey
+        } else if (com.que.platform.android.BuildConfig.PORCUPINE_ACCESS_KEY.isNotBlank()) {
+            com.que.platform.android.BuildConfig.PORCUPINE_ACCESS_KEY
+        } else {
+            null
+        }
+        
+        if (key != null && key.isNotBlank()) {
+            Log.d(TAG, "Starting Porcupine with key: ${key.take(4)}...")
+            wakeWordDetector?.start(key)
+        } else {
+            Log.e(TAG, "Cannot start wake word: Both Picovoice and BuildConfig Keys are missing")
+            serviceScope.launch(Dispatchers.Main) {
+                android.widget.Toast.makeText(this@QueConversationalService, "Wake Word Error: Missing Access Key", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun stopWakeWordDetection() {

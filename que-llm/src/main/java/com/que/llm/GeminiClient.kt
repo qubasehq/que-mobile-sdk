@@ -161,24 +161,43 @@ class GeminiClient(
         return GenerateContentRequest(
             contents = contents,
             generationConfig = GenerationConfig(
-                temperature = 0.4f,
-                maxOutputTokens = 1024
-            )
+                // Low temperature (0.2) is critical for tool use/automation to prevent hallucinations
+                // while still allowing the assistant to sound natural in chat.
+                temperature = 0.2f,
+                // Expanded token count to allow for potentially large JSON responses during complex automations
+                maxOutputTokens = 2048,
+                topP = 0.8f,
+                topK = 40
+            ),
+            safetySettings = null,
+            tools = null,
+            systemInstruction = null
         )
     }
 
     private fun parseResponse(bodyString: String): LLMResponse {
         val responseObj = json.decodeFromString<GenerateContentResponse>(bodyString)
-        val firstCandidate = responseObj.candidates?.firstOrNull()
-        val textContent = firstCandidate?.content?.parts?.firstOrNull()?.text ?: ""
+        val candidate = responseObj.candidates?.firstOrNull()
         
-        return LLMResponse(text = textContent, json = textContent)
+        val text = candidate
+            ?.content
+            ?.parts
+            ?.firstOrNull { it.text != null }
+            ?.text ?: ""
+        
+        return LLMResponse(
+            text = text,
+            json = null
+        )
     }
 
     @Serializable
     data class GenerateContentRequest(
         val contents: List<Content>,
-        val generationConfig: GenerationConfig? = null
+        val generationConfig: GenerationConfig? = null,
+        val safetySettings: List<SafetySetting>? = null,
+        val tools: List<Tool>? = null,
+        val systemInstruction: Content? = null
     )
 
     @Serializable
@@ -190,7 +209,10 @@ class GeminiClient(
     @Serializable
     data class Part(
         val text: String? = null,
-        val inlineData: InlineData? = null
+        val inlineData: InlineData? = null,
+        val fileData: FileData? = null,
+        val functionCall: FunctionCall? = null,
+        val functionResponse: FunctionResponse? = null
     )
 
     @Serializable
@@ -200,13 +222,74 @@ class GeminiClient(
     )
 
     @Serializable
-    data class GenerationConfig(
-        val temperature: Float? = null,
-        val maxOutputTokens: Int? = null
+    data class FileData(
+        val mimeType: String,
+        val fileUri: String
     )
 
     @Serializable
-    data class GenerateContentResponse(val candidates: List<Candidate>?)
+    data class FunctionCall(
+        val name: String,
+        val args: JsonObject
+    )
+
+    @Serializable
+    data class FunctionResponse(
+        val name: String,
+        val response: JsonObject
+    )
+
+    @Serializable
+    data class GenerationConfig(
+        val temperature: Float? = null,
+        val maxOutputTokens: Int? = null,
+        val topK: Int? = null,
+        val topP: Float? = null,
+        val stopSequences: List<String>? = null,
+        val candidateCount: Int? = null,
+        val presencePenalty: Float? = null,
+        val frequencyPenalty: Float? = null,
+        val responseMimeType: String? = null,
+        val responseSchema: JsonObject? = null,
+        val seed: Int? = null
+    )
+    
+    @Serializable
+    data class SafetySetting(
+        val category: String,
+        val threshold: String
+    )
+
+    @Serializable
+    data class Tool(
+        val functionDeclarations: List<FunctionDeclaration>
+    )
+
+    @Serializable
+    data class FunctionDeclaration(
+        val name: String,
+        val description: String,
+        val parameters: JsonObject
+    )
+
+    @Serializable
+    data class GenerateContentResponse(
+        val candidates: List<Candidate>? = null,
+        val promptFeedback: PromptFeedback? = null,
+        val usageMetadata: UsageMetadata? = null
+    )
+
+    @Serializable
+    data class PromptFeedback(
+        val blockReason: String? = null
+    )
+
+    @Serializable
+    data class UsageMetadata(
+        val promptTokenCount: Int? = null,
+        val candidatesTokenCount: Int? = null,
+        val totalTokenCount: Int? = null
+    )
 
     @Serializable
     data class Candidate(
